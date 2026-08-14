@@ -26,13 +26,37 @@
 		return RMIN + v * (RMAX - RMIN);
 	}
 
-	type Placed = { p: Planet; x: number; y: number; r: number; sunAu: number; earthAu: number };
+	// real radii compressed hard, otherwise Jupiter is a blob and Pluto vanishes
+	function bodyR(radiusKm: number): number {
+		return Math.max(1.5, Math.pow(radiusKm, 0.32) * 0.141);
+	}
+
+	type Placed = {
+		p: Planet;
+		x: number;
+		y: number;
+		r: number;
+		br: number;
+		lon: number;
+		fx: number;
+		fy: number;
+		trail: { x1: number; y1: number; x2: number; y2: number; o: number }[];
+		sunAu: number;
+		earthAu: number;
+	};
+
+	const TRAIL_SEGS = 14;
+	const TRAIL_ARC = 0.62;
+
+	let hovered = $state<string | null>(null);
 
 	let placed = $derived.by((): Placed[] =>
 		PLANETS.map((p) => {
 			const v = A.HelioVector(A.Body[p.key as keyof typeof A.Body] as A.Body, now);
 			const lon = Math.atan2(v.y, v.x);
 			const r = orbitR(p.orbitAu);
+			const x = Math.cos(lon) * r;
+			const y = -Math.sin(lon) * r;
 			let earthAu = 0;
 			try {
 				const g = A.GeoVector(A.Body[p.key as keyof typeof A.Body] as A.Body, now, true);
@@ -40,11 +64,30 @@
 			} catch {
 				earthAu = 0;
 			}
+			// the lit limb has to face the Sun, so the gradient focus leans inward
+			const d = Math.hypot(x, y) || 1;
+			const trail = [];
+			for (let i = 0; i < TRAIL_SEGS; i++) {
+				const a1 = lon - (TRAIL_ARC * (i + 1)) / TRAIL_SEGS;
+				const a2 = lon - (TRAIL_ARC * i) / TRAIL_SEGS;
+				trail.push({
+					x1: Math.cos(a1) * r,
+					y1: -Math.sin(a1) * r,
+					x2: Math.cos(a2) * r,
+					y2: -Math.sin(a2) * r,
+					o: Math.pow(i / TRAIL_SEGS, 1.7) * 0.75
+				});
+			}
 			return {
 				p,
-				x: Math.cos(lon) * r,
-				y: -Math.sin(lon) * r,
+				x,
+				y,
 				r,
+				br: bodyR(p.radiusKm),
+				lon,
+				fx: 0.5 - (x / d) * 0.32,
+				fy: 0.5 - (y / d) * 0.32,
+				trail,
 				sunAu: Math.hypot(v.x, v.y, v.z),
 				earthAu
 			};
@@ -94,21 +137,74 @@
 	{#if tab === 'system'}
 		<div class="split" in:fade={{ duration: 150 }}>
 			<div class="orrery">
-				<svg viewBox="-105 -105 210 210" role="img" aria-label="Live map of the solar system">
+				<svg viewBox="-108 -108 216 216" role="img" aria-label="Live map of the solar system">
+					<defs>
+						<radialGradient id="corona">
+							<stop offset="0%" stop-color="#fff6d8" stop-opacity="0.95" />
+							<stop offset="22%" stop-color="#ffc85a" stop-opacity="0.5" />
+							<stop offset="55%" stop-color="#ff9420" stop-opacity="0.16" />
+							<stop offset="100%" stop-color="#ff7a00" stop-opacity="0" />
+						</radialGradient>
+						<radialGradient id="sunface" fx="0.42" fy="0.38">
+							<stop offset="0%" stop-color="#fffdf2" />
+							<stop offset="55%" stop-color="#ffd45c" />
+							<stop offset="100%" stop-color="#ff9d21" />
+						</radialGradient>
+						<radialGradient id="deepspace">
+							<stop offset="0%" stop-color="#161033" stop-opacity="0.85" />
+							<stop offset="55%" stop-color="#0a0720" stop-opacity="0.5" />
+							<stop offset="100%" stop-color="#04030c" stop-opacity="0" />
+						</radialGradient>
+						{#each placed as q (q.p.key)}
+							<radialGradient id="g-{q.p.key}" fx={q.fx} fy={q.fy}>
+								<stop offset="0%" stop-color="#ffffff" stop-opacity="0.85" />
+								<stop offset="28%" stop-color={q.p.color} />
+								<stop offset="100%" stop-color="#0a0616" />
+							</radialGradient>
+						{/each}
+					</defs>
+
+					<circle cx="0" cy="0" r="104" fill="url(#deepspace)" />
+
 					{#each placed as q (q.p.key)}
-						<circle class="orbit" cx="0" cy="0" r={q.r} />
+						<circle
+							class="orbit"
+							class:lit={picked === q.p.key || hovered === q.p.key}
+							cx="0"
+							cy="0"
+							r={q.r}
+						/>
 					{/each}
-					<circle class="sun" cx="0" cy="0" r="7" />
+
+					{#each placed as q (q.p.key)}
+						{#each q.trail as t, i (i)}
+							<line
+								x1={t.x1}
+								y1={t.y1}
+								x2={t.x2}
+								y2={t.y2}
+								stroke={q.p.color}
+								stroke-opacity={t.o}
+								stroke-width={q.br * 0.34}
+								stroke-linecap="round"
+							/>
+						{/each}
+					{/each}
+
+					<circle cx="0" cy="0" r="26" fill="url(#corona)" />
+					<circle class="sunface" cx="0" cy="0" r="7.5" fill="url(#sunface)" />
 					<circle
-						class="sunglow"
+						class="sunhit"
 						cx="0"
 						cy="0"
-						r="12"
+						r="14"
 						onclick={() => (picked = 'Sun')}
 						role="button"
 						tabindex="0"
+						aria-label="Sun"
 						onkeydown={(e) => e.key === 'Enter' && (picked = 'Sun')}
 					/>
+
 					{#each placed as q (q.p.key)}
 						<g
 							class="planet"
@@ -116,19 +212,43 @@
 							transform="translate({q.x} {q.y})"
 							onclick={() => (picked = q.p.key)}
 							onkeydown={(e) => e.key === 'Enter' && (picked = q.p.key)}
+							onmouseenter={() => (hovered = q.p.key)}
+							onmouseleave={() => (hovered = null)}
 							role="button"
 							tabindex="0"
+							aria-label={q.p.name}
 						>
-							<circle class="hit" r="7" />
-							{#if q.p.ring}
-								<ellipse class="ring" rx="6" ry="2" />
-							{/if}
+							<circle class="hit" r={Math.max(8, q.br + 5)} />
 							<circle
-								class="dot"
-								r={q.p.radiusKm > 20000 ? 3.4 : 2.3}
-								style="fill:{q.p.color}"
+								class="bloom"
+								r={q.br * 2.4}
+								fill={q.p.color}
+								opacity={picked === q.p.key || hovered === q.p.key ? 0.28 : 0.13}
 							/>
-							<text y="-6">{q.p.name}</text>
+							{#if q.p.ring}
+								<g transform="rotate(-16)">
+									<ellipse
+										class="ringback"
+										rx={q.br * 2}
+										ry={q.br * 0.62}
+										stroke={q.p.color}
+									/>
+								</g>
+							{/if}
+							<circle r={q.br} fill="url(#g-{q.p.key})" />
+							{#if q.p.ring}
+								<g transform="rotate(-16)">
+									<path
+										class="ringfront"
+										d="M {-q.br * 2} 0 A {q.br * 2} {q.br * 0.62} 0 0 0 {q.br * 2} 0"
+										stroke={q.p.color}
+									/>
+								</g>
+							{/if}
+							{#if picked === q.p.key || hovered === q.p.key}
+								<circle class="halo" r={q.br + 3.2} />
+								<text y={-(q.br + 5.5)}>{q.p.name}</text>
+							{/if}
 						</g>
 					{/each}
 				</svg>
@@ -276,7 +396,14 @@
 		padding: 0.6rem;
 		border-radius: 18px;
 		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(255, 255, 255, 0.03);
+		background:
+			radial-gradient(1px 1px at 18% 24%, rgba(255, 255, 255, 0.5), transparent 60%),
+			radial-gradient(1px 1px at 76% 18%, rgba(255, 255, 255, 0.4), transparent 60%),
+			radial-gradient(1px 1px at 62% 82%, rgba(255, 255, 255, 0.45), transparent 60%),
+			radial-gradient(1px 1px at 28% 70%, rgba(255, 255, 255, 0.35), transparent 60%),
+			radial-gradient(1px 1px at 88% 56%, rgba(255, 255, 255, 0.3), transparent 60%),
+			radial-gradient(circle at 50% 50%, rgba(60, 40, 120, 0.18), transparent 62%),
+			rgba(6, 4, 16, 0.72);
 	}
 	svg {
 		width: 100%;
@@ -285,46 +412,57 @@
 	}
 	.orbit {
 		fill: none;
-		stroke: rgba(255, 255, 255, 0.11);
-		stroke-width: 0.35;
+		stroke: rgba(190, 200, 255, 0.09);
+		stroke-width: 0.3;
+		transition:
+			stroke 0.25s,
+			stroke-width 0.25s;
 	}
-	.sun {
-		fill: #ffcf5c;
+	.orbit.lit {
+		stroke: rgba(210, 220, 255, 0.42);
+		stroke-width: 0.5;
 	}
-	.sunglow {
-		fill: rgba(255, 200, 80, 0.16);
+	.sunhit {
+		fill: transparent;
 		cursor: pointer;
 	}
 	.planet {
 		cursor: pointer;
 	}
+	.planet:focus-visible {
+		outline: none;
+	}
 	.hit {
 		fill: transparent;
 	}
-	.dot {
-		stroke: rgba(0, 0, 0, 0.5);
-		stroke-width: 0.3;
+	.bloom {
+		transition: opacity 0.25s;
 	}
-	.ring {
+	.halo {
 		fill: none;
-		stroke: rgba(255, 255, 255, 0.55);
-		stroke-width: 0.5;
+		stroke: rgba(255, 255, 255, 0.75);
+		stroke-width: 0.45;
+	}
+	/* back half sits under the globe, front half is drawn over it */
+	.ringback,
+	.ringfront {
+		fill: none;
+		stroke-width: 0.7;
+		stroke-opacity: 0.75;
+	}
+	.ringfront {
+		stroke-opacity: 0.95;
 	}
 	.planet text {
-		font-size: 3.6px;
-		fill: #8a83ad;
+		font-size: 4.2px;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		fill: #fff;
 		text-anchor: middle;
 		pointer-events: none;
-	}
-	.planet.sel text {
-		fill: #fff;
-	}
-	.planet.sel .dot {
-		stroke: #fff;
-		stroke-width: 0.7;
-	}
-	.planet:hover text {
-		fill: #fff;
+		paint-order: stroke;
+		stroke: rgba(4, 2, 12, 0.9);
+		stroke-width: 1.1;
 	}
 	.stamp {
 		margin: 0.4rem 0 0;
