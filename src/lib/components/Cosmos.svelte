@@ -1,15 +1,22 @@
 <script lang="ts">
-	// Nebula haze plus two star layers that breathe at different rates. Only
-	// opacity and transform are animated, so the compositor handles all of it
-	// and the CPU stays out of it entirely.
+	// Two real NASA frames drifting and cross-fading forever, over a painted base
+	// that renders instantly and stays put if the images never arrive. Everything
+	// animated here is transform or opacity only, so it runs on the compositor.
+	const SHOTS = [
+		'https://images-assets.nasa.gov/image/carina_nebula/carina_nebula~medium.jpg',
+		'https://images-assets.nasa.gov/image/PIA15658/PIA15658~medium.jpg'
+	];
 </script>
 
 <div class="cosmos" aria-hidden="true">
+	<div class="base"></div>
+	<div class="photo a" style="background-image:url({SHOTS[0]})"></div>
+	<div class="photo b" style="background-image:url({SHOTS[1]})"></div>
 	<div class="neb neb1"></div>
 	<div class="neb neb2"></div>
-	<div class="neb neb3"></div>
 	<div class="stars far"></div>
 	<div class="stars near"></div>
+	<div class="shade"></div>
 	<div class="vignette"></div>
 </div>
 
@@ -20,42 +27,51 @@
 		z-index: 0;
 		pointer-events: none;
 		overflow: hidden;
-		background: linear-gradient(180deg, #05030e, #090616 50%, #04020b);
 	}
 	.cosmos > * {
 		position: absolute;
-		inset: -20%;
+		inset: 0;
+	}
+
+	.base {
+		background: linear-gradient(180deg, #05030e, #090616 50%, #04020b);
+	}
+
+	/* the pair breathe in and out of each other on the same clock, so the loop
+	   never lands on a seam; alternate keeps the drift from snapping back */
+	.photo {
+		inset: -12%;
+		background-size: cover;
+		background-position: center;
+		will-change: transform, opacity;
+		mix-blend-mode: screen;
+	}
+	.a {
+		opacity: 0.55;
+		animation:
+			driftA 72s ease-in-out infinite alternate,
+			fadeA 60s ease-in-out infinite;
+	}
+	.b {
+		opacity: 0;
+		animation:
+			driftB 88s ease-in-out infinite alternate,
+			fadeB 60s ease-in-out infinite;
 	}
 
 	.neb {
 		will-change: transform;
+		mix-blend-mode: screen;
 	}
 	.neb1 {
-		background: radial-gradient(
-			38% 30% at 22% 26%,
-			rgba(126, 74, 224, 0.32),
-			transparent 70%
-		);
-		animation: drift1 64s ease-in-out infinite alternate;
+		background: radial-gradient(38% 30% at 22% 26%, rgba(126, 74, 224, 0.3), transparent 70%);
+		animation: driftA 64s ease-in-out infinite alternate;
 	}
 	.neb2 {
-		background: radial-gradient(
-			34% 28% at 78% 20%,
-			rgba(48, 132, 214, 0.26),
-			transparent 70%
-		);
-		animation: drift2 82s ease-in-out infinite alternate;
-	}
-	.neb3 {
-		background: radial-gradient(
-			42% 34% at 62% 84%,
-			rgba(206, 72, 168, 0.2),
-			transparent 72%
-		);
-		animation: drift3 96s ease-in-out infinite alternate;
+		background: radial-gradient(36% 30% at 78% 78%, rgba(206, 72, 168, 0.22), transparent 72%);
+		animation: driftB 96s ease-in-out infinite alternate;
 	}
 
-	/* two fixed star sheets, breathing out of phase so the sky never sits still */
 	.stars {
 		will-change: opacity;
 	}
@@ -84,23 +100,60 @@
 		animation: breathe 4.6s ease-in-out infinite alternate-reverse;
 	}
 
+	/* the photos are gorgeous and completely unreadable behind text, so they get
+	   pushed back down before the content sits on top */
+	.shade {
+		background: linear-gradient(
+			180deg,
+			rgba(4, 2, 12, 0.62),
+			rgba(4, 2, 12, 0.76) 45%,
+			rgba(3, 1, 9, 0.88)
+		);
+	}
 	.vignette {
-		background: radial-gradient(circle at 50% 40%, transparent 42%, rgba(2, 1, 6, 0.72) 100%);
+		background: radial-gradient(circle at 50% 38%, transparent 38%, rgba(2, 1, 6, 0.8) 100%);
 	}
 
-	@keyframes drift1 {
+	@keyframes driftA {
+		from {
+			transform: scale(1.06) translate3d(-1.5%, 1%, 0);
+		}
 		to {
-			transform: translate3d(3%, -2%, 0) scale(1.08);
+			transform: scale(1.2) translate3d(2%, -2%, 0);
 		}
 	}
-	@keyframes drift2 {
+	@keyframes driftB {
+		from {
+			transform: scale(1.18) translate3d(2%, -1.5%, 0);
+		}
 		to {
-			transform: translate3d(-4%, 3%, 0) scale(1.1);
+			transform: scale(1.05) translate3d(-2%, 2%, 0);
 		}
 	}
-	@keyframes drift3 {
-		to {
-			transform: translate3d(2%, -3%, 0) scale(1.06);
+	@keyframes fadeA {
+		0%,
+		38% {
+			opacity: 0.55;
+		}
+		50%,
+		88% {
+			opacity: 0;
+		}
+		100% {
+			opacity: 0.55;
+		}
+	}
+	@keyframes fadeB {
+		0%,
+		38% {
+			opacity: 0;
+		}
+		50%,
+		88% {
+			opacity: 0.5;
+		}
+		100% {
+			opacity: 0;
 		}
 	}
 	@keyframes breathe {

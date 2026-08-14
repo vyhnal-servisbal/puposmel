@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
-	import SpaceBg from '$lib/components/SpaceBg.svelte';
+	import Cosmos from '$lib/components/Cosmos.svelte';
 	import { sky, SUN_IMG, AURORA_IMG } from '$lib/skyStore.svelte';
 	import { PLACE, kpVerdict, fmtTime, fmtDate, fmtNum } from '$lib/sky';
 
@@ -21,7 +21,7 @@
 	<title>Night sky over {PLACE.name}</title>
 </svelte:head>
 
-<SpaceBg />
+<Cosmos />
 
 <div class="space">
 	<header class="head">
@@ -222,16 +222,24 @@
 		</section>
 
 		{#if sky.apod}
-			<section class="card apod wide" in:fade={{ duration: 200 }}>
+			<section class="card apod hero" in:fade={{ duration: 200 }}>
 				<h2>Picture of the day</h2>
-				{#if sky.apod.media_type === 'image'}
-					<img src={sky.apod.url} alt={sky.apod.title} loading="lazy" />
-				{:else}
-					<a class="vid" href={sky.apod.url} target="_blank" rel="noreferrer">Watch today's video →</a>
-				{/if}
-				<strong>{sky.apod.title}</strong>
-				{#if sky.apod.copyright}<span class="stamp">© {sky.apod.copyright.trim()}</span>{/if}
-				<p class="expl">{sky.apod.explanation}</p>
+				<div class="apodrow">
+					<div class="apodpic">
+						{#if sky.apod.media_type === 'image'}
+							<img src={sky.apod.url} alt={sky.apod.title} loading="lazy" />
+						{:else}
+							<a class="vid" href={sky.apod.url} target="_blank" rel="noreferrer"
+								>Watch today's video →</a
+							>
+						{/if}
+					</div>
+					<div class="apodtext">
+						<strong>{sky.apod.title}</strong>
+						{#if sky.apod.copyright}<span class="stamp">© {sky.apod.copyright.trim()}</span>{/if}
+						<p class="expl">{sky.apod.explanation}</p>
+					</div>
+				</div>
 			</section>
 		{:else if sky.errors.apod}
 			<section class="card wide"><h2>Picture of the day</h2>
@@ -252,19 +260,12 @@
 </div>
 
 <style>
-	/* the shader draws the background; this only darkens it enough to read on */
 	.space {
 		position: relative;
 		z-index: 1;
 		min-height: 100dvh;
 		padding: 1.2rem clamp(0.8rem, 3vw, 2rem) 3rem;
 		color: #d9d6ef;
-		background: linear-gradient(
-			180deg,
-			rgba(4, 2, 10, 0.35),
-			rgba(4, 2, 10, 0.72) 45%,
-			rgba(4, 2, 10, 0.88)
-		);
 	}
 
 	.head {
@@ -299,8 +300,13 @@
 	}
 	h1 {
 		margin: 0;
-		font-size: clamp(1.6rem, 4vw, 2.4rem);
-		letter-spacing: 0.02em;
+		font-size: clamp(1.7rem, 4.4vw, 2.6rem);
+		font-weight: 700;
+		letter-spacing: 0.01em;
+		background: linear-gradient(100deg, #fff 10%, #cfc0ff 55%, #8ec7ff);
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
 	}
 
 	.alert {
@@ -327,28 +333,47 @@
 		font-size: 1rem;
 	}
 
+	/* cards hug their content and dense packing fills the holes that leaves,
+	   otherwise short panels stretch and the page turns into empty boxes */
 	.grid {
-		max-width: 1200px;
+		max-width: 1280px;
 		margin: 0 auto;
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+		grid-auto-flow: dense;
+		align-items: start;
 		gap: 0.9rem;
 	}
 	.card {
 		min-width: 0;
-		padding: 1rem 1.1rem 1.1rem;
-		border-radius: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(10, 6, 22, 0.62);
+		padding: 1.05rem 1.15rem 1.15rem;
+		border-radius: 18px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background:
+			radial-gradient(120% 80% at 0% 0%, rgba(140, 110, 240, 0.13), transparent 60%),
+			rgba(9, 6, 22, 0.66);
+		box-shadow:
+			0 16px 40px rgba(0, 0, 0, 0.42),
+			inset 0 1px 0 rgba(255, 255, 255, 0.06);
+		transition:
+			border-color 0.2s,
+			transform 0.2s;
+	}
+	.card:hover {
+		border-color: rgba(178, 152, 255, 0.42);
+		transform: translateY(-2px);
 	}
 	.shot {
 		width: 100%;
-		border-radius: 10px;
+		border-radius: 12px;
 		display: block;
 		background: rgba(255, 255, 255, 0.04);
 	}
 	.wide {
 		grid-column: span 2;
+	}
+	.hero {
+		grid-column: 1 / -1;
 	}
 	@media (max-width: 620px) {
 		.wide {
@@ -356,14 +381,27 @@
 		}
 	}
 	h2 {
-		margin: 0 0 0.8rem;
-		font-size: 0.78rem;
+		margin: 0 0 0.85rem;
+		padding-left: 0.6rem;
+		font-size: 0.74rem;
 		text-transform: uppercase;
-		letter-spacing: 0.12em;
-		color: #8f88b4;
+		letter-spacing: 0.14em;
+		color: #a49cca;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+		position: relative;
+	}
+	h2::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 2px;
+		height: 0.72rem;
+		border-radius: 2px;
+		background: linear-gradient(180deg, #ffc98a, #b98cff);
 	}
 	.pill {
 		padding: 0.1rem 0.45rem;
@@ -399,12 +437,13 @@
 		margin-bottom: 0.8rem;
 	}
 	.bigmoon {
-		font-size: 2.6rem;
+		font-size: 3.2rem;
 		line-height: 1;
+		filter: drop-shadow(0 0 14px rgba(200, 210, 255, 0.45));
 	}
 	.moonrow strong {
 		display: block;
-		font-size: 1rem;
+		font-size: 1.08rem;
 	}
 	.lit {
 		font-size: 0.82rem;
@@ -568,14 +607,26 @@
 		}
 	}
 
-	.apod img {
-		width: 100%;
-		border-radius: 12px;
-		margin-bottom: 0.6rem;
+	.apodrow {
+		display: grid;
+		grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+		gap: 1.2rem;
+		align-items: start;
 	}
-	.apod strong {
+	@media (max-width: 780px) {
+		.apodrow {
+			grid-template-columns: 1fr;
+		}
+	}
+	.apodpic img {
+		width: 100%;
+		border-radius: 14px;
 		display: block;
-		margin-bottom: 0.2rem;
+	}
+	.apodtext strong {
+		display: block;
+		font-size: 1.15rem;
+		margin-bottom: 0.15rem;
 	}
 	.vid {
 		display: inline-block;
@@ -583,12 +634,11 @@
 		color: #9ecbff;
 	}
 	.expl {
-		margin: 0.5rem 0 0;
-		font-size: 0.84rem;
-		line-height: 1.55;
-		color: #a8a1c9;
-		max-height: 8.5rem;
-		overflow: auto;
+		margin: 0.6rem 0 0;
+		font-size: 0.86rem;
+		line-height: 1.65;
+		color: #b0a9d2;
+		text-wrap: pretty;
 	}
 
 	.note {
