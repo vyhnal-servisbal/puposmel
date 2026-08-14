@@ -2,6 +2,7 @@
 	import { store } from '$lib/binderStore.svelte';
 	import BinderPage from './BinderPage.svelte';
 	import BlackHole from './BlackHole.svelte';
+	import MilkyWay from './MilkyWay.svelte';
 
 	const isSpread = $derived(store.view === 'spread');
 	const left = $derived(store.binder.sides[store.index]);
@@ -35,8 +36,11 @@
 
 <div class="binder">
 	<div class="side">
-		<a class="skybtn" href="/sky" title="Night sky over Rychnov nad Kněžnou" aria-label="Night sky">
+		<a class="skybtn" href="/sky" title="UNIVERSE" aria-label="UNIVERSE">
 			<BlackHole size={30} />
+		</a>
+		<a class="skybtn" href="/solar" title="SOLAR SYSTEM" aria-label="SOLAR SYSTEM">
+			<MilkyWay size={30} />
 		</a>
 		<button
 			class="nav"

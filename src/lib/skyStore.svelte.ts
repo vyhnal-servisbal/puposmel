@@ -1,10 +1,16 @@
 import * as A from 'astronomy-engine';
-import { env } from '$env/dynamic/public';
 import { PLACE, showerCalendar, moonName, moonEmoji, type ShowerWindow } from './sky';
 
-const NASA_KEY = env.PUBLIC_NASA_KEY || 'DEMO_KEY';
+// Baked in rather than read from the environment. SvelteKit ships PUBLIC_ vars
+// to the browser anyway, so this is already visible in the page source either
+// way, and hardcoding removes the one failure mode where a deploy forgets it.
+// It is a rate limit counter, not a credential: 4000 requests an hour.
+const NASA_KEY = 'JUEIW39Y2qUSyFTSDxelkEQnAY0F58i12CbBjEa1';
 const KP_URL = 'https://services.swpc.noaa.gov/json/planetary_k_index_1m.json';
 const ISS_URL = 'https://api.wheretheiss.at/v1/satellites/25544';
+export const SUN_IMG = 'https://sdo.gsfc.nasa.gov/assets/img/latest/latest_512_0193.jpg';
+export const AURORA_IMG =
+	'https://services.swpc.noaa.gov/images/animations/ovation/north/latest.jpg';
 const AU_KM = 149597870.7;
 
 const obs = new A.Observer(PLACE.lat, PLACE.lon, PLACE.elevation);
@@ -157,6 +163,7 @@ export type Neo = {
 	hazardous: boolean;
 };
 export type Iss = { lat: number; lon: number; altKm: number; speedKmh: number; visibility: string };
+export type Epic = { url: string; caption: string; date: string };
 
 class SkyStore {
 	now = $state(new Date());
@@ -166,10 +173,12 @@ class SkyStore {
 	apod = $state<Apod | null>(null);
 	neo = $state<Neo[]>([]);
 	iss = $state<Iss | null>(null);
+	epic = $state<Epic | null>(null);
+	// cache buster so the two live JPEGs actually refresh instead of sitting stale
+	stamp = $state(0);
 
 	errors = $state<Record<string, string>>({});
 	alert = $state<string | null>(null);
-	usingDemoKey = NASA_KEY === 'DEMO_KEY';
 
 	private timers: ReturnType<typeof setInterval>[] = [];
 	private lastKp = -1;
@@ -270,22 +279,46 @@ class SkyStore {
 		}
 	}
 
+	// EPIC lags a day or two behind, so the newest entry is whatever it has
+	async loadEpic() {
+		try {
+			const r = await fetch(`https://api.nasa.gov/EPIC/api/natural?api_key=${NASA_KEY}`);
+			if (!r.ok) throw new Error('NASA ' + r.status);
+			const j = await r.json();
+			const shot = j?.[j.length - 1];
+			if (!shot) throw new Error('no frames');
+			const d = String(shot.date).slice(0, 10).replace(/-/g, '/');
+			this.epic = {
+				url: `https://api.nasa.gov/EPIC/archive/natural/${d}/png/${shot.image}.png?api_key=${NASA_KEY}`,
+				caption: shot.caption ?? '',
+				date: String(shot.date).slice(0, 16)
+			};
+			this.ok('epic');
+		} catch (e) {
+			this.fail('epic', e);
+		}
+	}
+
 	// Nothing here pushes, so "live" is a set of timers sized to how fast each
 	// source actually changes. Everything pauses while the tab is hidden.
 	start() {
 		this.now = new Date();
+		this.stamp = Date.now();
 		this.loadKp();
 		this.loadApod();
 		this.loadNeo();
 		this.loadIss();
+		this.loadEpic();
 
 		const add = (fn: () => void, ms: number) => this.timers.push(setInterval(fn, ms));
 		add(() => (this.now = new Date()), 30_000);
 		add(() => this.loadKp(), 5 * 60_000);
 		add(() => this.loadIss(), 15_000);
+		add(() => (this.stamp = Date.now()), 10 * 60_000);
 		add(() => {
 			this.loadApod();
 			this.loadNeo();
+			this.loadEpic();
 		}, 60 * 60_000);
 
 		const vis = () => {

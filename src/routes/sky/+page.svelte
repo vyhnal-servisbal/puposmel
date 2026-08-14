@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
-	import BlackHole from '$lib/components/BlackHole.svelte';
-	import { sky } from '$lib/skyStore.svelte';
+	import SpaceBg from '$lib/components/SpaceBg.svelte';
+	import { sky, SUN_IMG, AURORA_IMG } from '$lib/skyStore.svelte';
 	import { PLACE, kpVerdict, fmtTime, fmtDate, fmtNum } from '$lib/sky';
 
 	onMount(() => sky.start());
@@ -21,16 +21,18 @@
 	<title>Night sky over {PLACE.name}</title>
 </svelte:head>
 
+<SpaceBg />
+
 <div class="space">
 	<header class="head">
-		<a class="back" href="/">← Binder</a>
-		<div class="title">
-			<BlackHole size={92} />
-			<div>
-				<h1>Night sky</h1>
-				<p>{PLACE.name}, {PLACE.region} · {PLACE.lat.toFixed(4)}° N {PLACE.lon.toFixed(4)}° E</p>
-			</div>
+		<div class="navrow">
+			<a class="back" href="/">← Binder</a>
+			<a class="back solar" href="/solar">Solar system →</a>
 		</div>
+		<h1>Night sky</h1>
+		<p class="where">
+			{PLACE.name}, {PLACE.region} · {PLACE.lat.toFixed(4)}° N {PLACE.lon.toFixed(4)}° E
+		</p>
 	</header>
 
 	{#if sky.alert}
@@ -119,6 +121,7 @@
 						<span style="height:{Math.max(6, (v / 9) * 100)}%" class:hot={v >= 5}></span>
 					{/each}
 				</div>
+				<img class="shot" src="{AURORA_IMG}?t={sky.stamp}" alt="NOAA aurora forecast, northern hemisphere" loading="lazy" />
 				<p class="note">{verdict.text}</p>
 			{:else if sky.errors.kp}
 				<p class="err">NOAA unreachable: {sky.errors.kp}</p>
@@ -167,6 +170,15 @@
 				{/if}
 			</dl>
 			<p class="note">Dates are global; visibility from Rychnov is a separate question.</p>
+		</section>
+
+		<section class="card">
+			<h2>The Sun, near live</h2>
+			<img class="shot" src="{SUN_IMG}?t={sky.stamp}" alt="Solar Dynamics Observatory, 193 Å" loading="lazy" />
+			<p class="note">
+				SDO in the 193 Å band, which shows the million degree corona. Refreshes every few
+				minutes.
+			</p>
 		</section>
 
 		<section class="card">
@@ -225,40 +237,55 @@
 			<section class="card wide"><h2>Picture of the day</h2>
 				<p class="err">NASA unreachable: {sky.errors.apod}</p></section>
 		{/if}
-	</div>
 
-	{#if sky.usingDemoKey}
-		<p class="foot">
-			Running on NASA's shared DEMO_KEY, which is rate limited. Put your own free key in
-			<code>PUBLIC_NASA_KEY</code> to stop the picture and asteroid panels dropping out.
-		</p>
-	{/if}
+		{#if sky.epic}
+			<section class="card" in:fade={{ duration: 200 }}>
+				<h2>Earth from a million miles</h2>
+				<img class="shot" src={sky.epic.url} alt="EPIC full disc Earth" loading="lazy" />
+				<p class="note">
+					DSCOVR sits between us and the Sun and photographs the whole daylit face. Taken
+					{sky.epic.date.replace('T', ' ')} UTC.
+				</p>
+			</section>
+		{/if}
+	</div>
 </div>
 
 <style>
+	/* the shader draws the background; this only darkens it enough to read on */
 	.space {
+		position: relative;
+		z-index: 1;
 		min-height: 100dvh;
 		padding: 1.2rem clamp(0.8rem, 3vw, 2rem) 3rem;
 		color: #d9d6ef;
-		background:
-			radial-gradient(1px 1px at 12% 22%, rgba(255, 255, 255, 0.75), transparent 60%),
-			radial-gradient(1px 1px at 68% 12%, rgba(255, 255, 255, 0.6), transparent 60%),
-			radial-gradient(1.4px 1.4px at 82% 64%, rgba(255, 255, 255, 0.65), transparent 60%),
-			radial-gradient(1px 1px at 34% 78%, rgba(255, 255, 255, 0.5), transparent 60%),
-			radial-gradient(1.2px 1.2px at 48% 42%, rgba(255, 255, 255, 0.45), transparent 60%),
-			radial-gradient(circle at 78% 8%, rgba(120, 80, 220, 0.22), transparent 45%),
-			radial-gradient(circle at 8% 88%, rgba(40, 130, 200, 0.18), transparent 45%),
-			linear-gradient(180deg, #06040f, #0a0716 55%, #05030c);
-		background-attachment: fixed;
+		background: linear-gradient(
+			180deg,
+			rgba(4, 2, 10, 0.35),
+			rgba(4, 2, 10, 0.72) 45%,
+			rgba(4, 2, 10, 0.88)
+		);
 	}
 
 	.head {
 		max-width: 1200px;
 		margin: 0 auto 1.4rem;
 	}
+	.navrow {
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 0.9rem;
+	}
+	.solar {
+		border-color: rgba(170, 150, 255, 0.45);
+	}
+	.where {
+		margin: 0.25rem 0 0;
+		font-size: 0.85rem;
+		color: #9a93bd;
+	}
 	.back {
 		display: inline-block;
-		margin-bottom: 0.9rem;
 		padding: 0.4rem 0.75rem;
 		border-radius: 10px;
 		border: 1px solid rgba(255, 255, 255, 0.12);
@@ -270,20 +297,10 @@
 	.back:hover {
 		border-color: rgba(255, 170, 90, 0.6);
 	}
-	.title {
-		display: flex;
-		align-items: center;
-		gap: 1.1rem;
-	}
 	h1 {
 		margin: 0;
 		font-size: clamp(1.6rem, 4vw, 2.4rem);
 		letter-spacing: 0.02em;
-	}
-	.title p {
-		margin: 0.25rem 0 0;
-		font-size: 0.85rem;
-		color: #9a93bd;
 	}
 
 	.alert {
@@ -322,7 +339,13 @@
 		padding: 1rem 1.1rem 1.1rem;
 		border-radius: 16px;
 		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(255, 255, 255, 0.035);
+		background: rgba(10, 6, 22, 0.62);
+	}
+	.shot {
+		width: 100%;
+		border-radius: 10px;
+		display: block;
+		background: rgba(255, 255, 255, 0.04);
 	}
 	.wide {
 		grid-column: span 2;
@@ -584,10 +607,5 @@
 		margin: 1.2rem auto 0;
 		font-size: 0.78rem;
 		color: #7d769f;
-	}
-	code {
-		padding: 0.05rem 0.3rem;
-		border-radius: 5px;
-		background: rgba(255, 255, 255, 0.07);
 	}
 </style>
