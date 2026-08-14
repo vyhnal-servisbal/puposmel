@@ -4,6 +4,7 @@
 	import * as A from 'astronomy-engine';
 	import { PLANETS, SUN, type Planet } from '$lib/solar';
 	import { CATEGORIES, type SkyObject } from '$lib/deepsky';
+	import Cosmos from '$lib/components/Cosmos.svelte';
 	import { fmtNum } from '$lib/sky';
 
 	let now = $state(new Date());
@@ -144,6 +145,8 @@
 	<title>Solar system</title>
 </svelte:head>
 
+<Cosmos />
+
 <div class="space">
 	<header class="head">
 		<div class="navrow">
@@ -262,19 +265,19 @@
 
 				{#if facts.length}
 					<div class="carousel">
-						<div class="cnav">
-							<button onclick={() => step(-1)} aria-label="Previous fact">‹</button>
-							<span>{factIndex + 1} / {facts.length}</span>
-							<button onclick={() => step(1)} aria-label="Next fact">›</button>
+						<button class="side" onclick={() => step(-1)} aria-label="Previous fact">‹</button>
+						<div class="cbody">
+							<span class="cnum">{String(factIndex + 1).padStart(2, '0')} <i>/ {facts.length}</i></span>
+							{#key factIndex}
+								<p class="fact" in:fade={{ duration: 150 }}>{facts[factIndex]}</p>
+							{/key}
+							<div class="pips">
+								{#each facts as _, i (i)}
+									<button class="pip" class:on={i === factIndex} onclick={() => (factIndex = i)} aria-label="Fact {i + 1}"></button>
+								{/each}
+							</div>
 						</div>
-						{#key factIndex}
-							<p class="fact" in:fade={{ duration: 140 }}>{facts[factIndex]}</p>
-						{/key}
-						<div class="pips">
-							{#each facts as _, i (i)}
-								<button class="pip" class:on={i === factIndex} onclick={() => (factIndex = i)} aria-label="Fact {i + 1}"></button>
-							{/each}
-						</div>
+						<button class="side" onclick={() => step(1)} aria-label="Next fact">›</button>
 					</div>
 				{/if}
 			</aside>
@@ -316,19 +319,19 @@
 										<p class="tag">{pickedObj.tagline}</p>
 									</div>
 									<div class="carousel">
-										<div class="cnav">
-											<button onclick={() => stepObj(-1)} aria-label="Previous fact">‹</button>
-											<span>{objFact + 1} / {pickedObj.facts.length}</span>
-											<button onclick={() => stepObj(1)} aria-label="Next fact">›</button>
+										<button class="side" onclick={() => stepObj(-1)} aria-label="Previous fact">‹</button>
+										<div class="cbody">
+											<span class="cnum">{String(objFact + 1).padStart(2, '0')} <i>/ {pickedObj.facts.length}</i></span>
+											{#key objFact}
+												<p class="fact" in:fade={{ duration: 150 }}>{pickedObj.facts[objFact]}</p>
+											{/key}
+											<div class="pips">
+												{#each pickedObj.facts as _, i (i)}
+													<button class="pip" class:on={i === objFact} onclick={() => (objFact = i)} aria-label="Fact {i + 1}"></button>
+												{/each}
+											</div>
 										</div>
-										{#key objFact}
-											<p class="fact" in:fade={{ duration: 140 }}>{pickedObj.facts[objFact]}</p>
-										{/key}
-										<div class="pips">
-											{#each pickedObj.facts as _, i (i)}
-												<button class="pip" class:on={i === objFact} onclick={() => (objFact = i)} aria-label="Fact {i + 1}"></button>
-											{/each}
-										</div>
+										<button class="side" onclick={() => stepObj(1)} aria-label="Next fact">›</button>
 									</div>
 									{#if shots[pickedObj.key]?.title}
 										<p class="credit">Image: NASA · {shots[pickedObj.key]!.title}</p>
@@ -345,17 +348,11 @@
 
 <style>
 	.space {
+		position: relative;
+		z-index: 1;
 		min-height: 100dvh;
 		padding: 1.2rem clamp(0.8rem, 3vw, 2rem) 3rem;
 		color: #d9d6ef;
-		background:
-			radial-gradient(1px 1px at 14% 26%, rgba(255, 255, 255, 0.7), transparent 60%),
-			radial-gradient(1px 1px at 72% 16%, rgba(255, 255, 255, 0.55), transparent 60%),
-			radial-gradient(1.3px 1.3px at 86% 68%, rgba(255, 255, 255, 0.6), transparent 60%),
-			radial-gradient(1px 1px at 30% 82%, rgba(255, 255, 255, 0.45), transparent 60%),
-			radial-gradient(circle at 80% 10%, rgba(120, 80, 220, 0.2), transparent 45%),
-			linear-gradient(180deg, #06040f, #0a0716 55%, #05030c);
-		background-attachment: fixed;
 	}
 	.head {
 		max-width: 1200px;
@@ -381,10 +378,16 @@
 	}
 	h1 {
 		margin: 0;
-		font-size: clamp(1.5rem, 4vw, 2.2rem);
+		font-size: clamp(1.6rem, 4.4vw, 2.5rem);
+		font-weight: 700;
+		letter-spacing: 0.01em;
+		background: linear-gradient(100deg, #fff 10%, #cfc0ff 55%, #8ec7ff);
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
 	}
 	.sub {
-		margin: 0.25rem 0 0.9rem;
+		margin: 0.3rem 0 1rem;
 		font-size: 0.85rem;
 		color: #9a93bd;
 	}
@@ -424,7 +427,10 @@
 	.orrery {
 		padding: 0.6rem;
 		border-radius: 18px;
-		border: 1px solid rgba(255, 255, 255, 0.09);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		box-shadow:
+			0 18px 46px rgba(0, 0, 0, 0.45),
+			inset 0 1px 0 rgba(255, 255, 255, 0.06);
 		background:
 			radial-gradient(1px 1px at 18% 24%, rgba(255, 255, 255, 0.5), transparent 60%),
 			radial-gradient(1px 1px at 76% 18%, rgba(255, 255, 255, 0.4), transparent 60%),
@@ -501,8 +507,13 @@
 	.detail {
 		padding: 1.1rem 1.2rem 1.2rem;
 		border-radius: 18px;
-		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(255, 255, 255, 0.035);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background:
+			radial-gradient(110% 70% at 0% 0%, rgba(150, 110, 255, 0.14), transparent 62%),
+			rgba(9, 6, 22, 0.62);
+		box-shadow:
+			0 18px 46px rgba(0, 0, 0, 0.45),
+			inset 0 1px 0 rgba(255, 255, 255, 0.06);
 	}
 	.glyph {
 		font-size: 2rem;
@@ -536,60 +547,92 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	/* tall flanking buttons, same shape language as the binder page arrows */
 	.carousel {
-		margin-top: 1rem;
-		padding-top: 0.9rem;
-		border-top: 1px solid rgba(255, 255, 255, 0.08);
-	}
-	.cnav {
-		display: flex;
-		align-items: center;
+		margin-top: 1.1rem;
+		display: grid;
+		grid-template-columns: 42px minmax(0, 1fr) 42px;
 		gap: 0.6rem;
-		margin-bottom: 0.5rem;
+		align-items: stretch;
 	}
-	.cnav span {
-		font-size: 0.75rem;
-		color: #8a83ad;
+	.side {
+		border-radius: 14px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+		color: #cfc9ea;
+		cursor: pointer;
+		font-size: 1.5rem;
+		line-height: 1;
+		transition:
+			border-color 0.2s,
+			background 0.2s,
+			color 0.2s;
+	}
+	.side:hover {
+		border-color: rgba(255, 178, 100, 0.75);
+		background: linear-gradient(180deg, rgba(255, 160, 70, 0.18), rgba(255, 120, 40, 0.05));
+		color: #fff;
+	}
+	.side:active {
+		transform: translateY(1px);
+	}
+	.cbody {
+		min-width: 0;
+		padding: 0.85rem 1rem 0.9rem;
+		border-radius: 14px;
+		border: 1px solid rgba(255, 255, 255, 0.09);
+		background:
+			radial-gradient(120% 80% at 0% 0%, rgba(140, 110, 240, 0.12), transparent 60%),
+			rgba(8, 5, 20, 0.55);
+	}
+	.cnum {
+		display: block;
+		margin-bottom: 0.45rem;
+		font-size: 1.05rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		color: #ffc180;
 		font-variant-numeric: tabular-nums;
 	}
-	.cnav button {
-		width: 1.8rem;
-		height: 1.8rem;
-		border-radius: 8px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.05);
-		color: #d9d6ef;
-		cursor: pointer;
-		font-size: 1rem;
-		line-height: 1;
-	}
-	.cnav button:hover {
-		border-color: rgba(255, 175, 95, 0.7);
+	.cnum i {
+		font-style: normal;
+		font-size: 0.72rem;
+		font-weight: 500;
+		letter-spacing: 0.1em;
+		color: #7d769f;
 	}
 	.fact {
 		margin: 0;
-		min-height: 4.6rem;
-		font-size: 0.92rem;
-		line-height: 1.6;
-		color: #ddd7f5;
+		min-height: 5.1rem;
+		font-size: 0.95rem;
+		line-height: 1.65;
+		color: #e4dffa;
+		text-wrap: pretty;
 	}
 	.pips {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
-		margin-top: 0.7rem;
+		margin-top: 0.8rem;
 	}
 	.pip {
-		width: 16px;
-		height: 4px;
+		width: 18px;
+		height: 3px;
 		border: 0;
 		padding: 0;
-		border-radius: 2px;
-		background: rgba(255, 255, 255, 0.16);
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.14);
 		cursor: pointer;
+		transition:
+			background 0.2s,
+			box-shadow 0.2s;
+	}
+	.pip:hover {
+		background: rgba(255, 255, 255, 0.32);
 	}
 	.pip.on {
-		background: #ffb45f;
+		background: linear-gradient(90deg, #ffd08a, #ff9d3c);
+		box-shadow: 0 0 8px rgba(255, 160, 70, 0.65);
 	}
 
 	.sections {
@@ -600,12 +643,24 @@
 	}
 	.cat {
 		border-radius: 18px;
-		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(255, 255, 255, 0.035);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background:
+			radial-gradient(120% 100% at 0% 0%, rgba(140, 110, 240, 0.1), transparent 58%),
+			rgba(9, 6, 22, 0.58);
+		box-shadow:
+			0 14px 34px rgba(0, 0, 0, 0.38),
+			inset 0 1px 0 rgba(255, 255, 255, 0.05);
 		overflow: hidden;
+		transition:
+			border-color 0.2s,
+			box-shadow 0.2s;
 	}
 	.cat.open {
-		border-color: rgba(170, 150, 255, 0.4);
+		border-color: rgba(178, 152, 255, 0.55);
+		box-shadow:
+			0 18px 46px rgba(0, 0, 0, 0.5),
+			0 0 0 1px rgba(150, 110, 255, 0.18),
+			inset 0 1px 0 rgba(255, 255, 255, 0.07);
 	}
 	.cathead {
 		width: 100%;
