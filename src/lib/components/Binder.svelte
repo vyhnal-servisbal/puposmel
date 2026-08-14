@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { store } from '$lib/binderStore.svelte';
 	import BinderPage from './BinderPage.svelte';
+	import BlackHole from './BlackHole.svelte';
 
 	const isSpread = $derived(store.view === 'spread');
 	const left = $derived(store.binder.sides[store.index]);
@@ -33,12 +34,17 @@
 </script>
 
 <div class="binder">
-	<button
-		class="nav"
-		onclick={() => store.prev()}
-		disabled={!store.canPrev}
-		aria-label="Previous page">‹</button
-	>
+	<div class="side">
+		<a class="skybtn" href="/sky" title="Night sky over Rychnov nad Kněžnou" aria-label="Night sky">
+			<BlackHole size={30} />
+		</a>
+		<button
+			class="nav"
+			onclick={() => store.prev()}
+			disabled={!store.canPrev}
+			aria-label="Previous page">‹</button
+		>
+	</div>
 
 	{#key store.index}
 		<div class="spread" class:single={!isSpread} class:paired={!!right} style={spreadStyle}>
@@ -122,6 +128,35 @@
 			opacity: 1;
 			filter: brightness(1);
 		}
+	}
+
+	/* the left gutter carries the sky button on top and the page arrow below it */
+	.side {
+		flex: none;
+		align-self: stretch;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		width: 44px;
+	}
+	.side .nav {
+		width: 100%;
+		flex: 1;
+		align-self: auto;
+	}
+	.skybtn {
+		flex: none;
+		height: 44px;
+		display: grid;
+		place-items: center;
+		border-radius: 14px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: radial-gradient(circle at 50% 45%, #100a24, #06040f 70%);
+		text-decoration: none;
+		transition: border-color 0.2s;
+	}
+	.skybtn:hover {
+		border-color: rgba(255, 175, 95, 0.7);
 	}
 
 	/* tall, elongated side buttons */
