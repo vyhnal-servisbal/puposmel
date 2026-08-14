@@ -2,31 +2,35 @@
 	import { onMount } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
 	import * as A from 'astronomy-engine';
-	import { PLANETS, SUN, DEEP_SKY, type Planet, type DeepSky } from '$lib/solar';
+	import { PLANETS, SUN, type Planet } from '$lib/solar';
+	import { CATEGORIES, type SkyObject } from '$lib/deepsky';
 	import { fmtNum } from '$lib/sky';
 
 	let now = $state(new Date());
 	let tab = $state<'system' | 'deep'>('system');
 	let picked = $state<string>('Earth');
-	let pickedDeep = $state<string | null>(null);
-	let images = $state<Record<string, { url: string; title: string } | null>>({});
+	let factIndex = $state(0);
+
+	let openCat = $state<string | null>(null);
+	let pickedObj = $state<SkyObject | null>(null);
+	let objFact = $state(0);
+
+	type Shot = { url: string; title: string };
+	let shots = $state<Record<string, Shot | null>>({});
+	let loadingCat = $state<string | null>(null);
 
 	onMount(() => {
 		const t = setInterval(() => (now = new Date()), 60_000);
 		return () => clearInterval(t);
 	});
 
-	// log spacing, otherwise Mercury sits on the Sun and Neptune leaves the page
 	const RMIN = 14;
 	const RMAX = 96;
 	const lo = Math.log10(PLANETS[0].orbitAu * 10 + 1);
 	const hi = Math.log10(PLANETS[PLANETS.length - 1].orbitAu * 10 + 1);
 	function orbitR(au: number): number {
-		const v = (Math.log10(au * 10 + 1) - lo) / (hi - lo);
-		return RMIN + v * (RMAX - RMIN);
+		return RMIN + ((Math.log10(au * 10 + 1) - lo) / (hi - lo)) * (RMAX - RMIN);
 	}
-
-	// real radii compressed hard, otherwise Jupiter is a blob and Pluto vanishes
 	function bodyR(radiusKm: number): number {
 		return Math.max(1.5, Math.pow(radiusKm, 0.32) * 0.141);
 	}
@@ -37,7 +41,6 @@
 		y: number;
 		r: number;
 		br: number;
-		lon: number;
 		fx: number;
 		fy: number;
 		trail: { x1: number; y1: number; x2: number; y2: number; o: number }[];
@@ -47,24 +50,23 @@
 
 	const TRAIL_SEGS = 14;
 	const TRAIL_ARC = 0.62;
-
 	let hovered = $state<string | null>(null);
 
 	let placed = $derived.by((): Placed[] =>
 		PLANETS.map((p) => {
-			const v = A.HelioVector(A.Body[p.key as keyof typeof A.Body] as A.Body, now);
+			const body = A.Body[p.key as keyof typeof A.Body] as A.Body;
+			const v = A.HelioVector(body, now);
 			const lon = Math.atan2(v.y, v.x);
 			const r = orbitR(p.orbitAu);
 			const x = Math.cos(lon) * r;
 			const y = -Math.sin(lon) * r;
 			let earthAu = 0;
 			try {
-				const g = A.GeoVector(A.Body[p.key as keyof typeof A.Body] as A.Body, now, true);
+				const g = A.GeoVector(body, now, true);
 				earthAu = Math.hypot(g.x, g.y, g.z);
 			} catch {
 				earthAu = 0;
 			}
-			// the lit limb has to face the Sun, so the gradient focus leans inward
 			const d = Math.hypot(x, y) || 1;
 			const trail = [];
 			for (let i = 0; i < TRAIL_SEGS; i++) {
@@ -78,44 +80,63 @@
 					o: Math.pow(i / TRAIL_SEGS, 1.7) * 0.75
 				});
 			}
-			return {
-				p,
-				x,
-				y,
-				r,
-				br: bodyR(p.radiusKm),
-				lon,
-				fx: 0.5 - (x / d) * 0.32,
-				fy: 0.5 - (y / d) * 0.32,
-				trail,
-				sunAu: Math.hypot(v.x, v.y, v.z),
-				earthAu
-			};
+			return { p, x, y, r, br: bodyR(p.radiusKm), fx: 0.5 - (x / d) * 0.32, fy: 0.5 - (y / d) * 0.32, trail, sunAu: Math.hypot(v.x, v.y, v.z), earthAu };
 		})
 	);
 
 	let current = $derived(placed.find((q) => q.p.key === picked) ?? null);
-	let deep = $derived(DEEP_SKY.find((d) => d.key === pickedDeep) ?? null);
+	let facts = $derived(picked === 'Sun' ? SUN.facts : (current?.p.facts ?? []));
 
-	async function loadImage(d: DeepSky) {
-		if (d.key in images) return;
-		images = { ...images, [d.key]: null };
+	function pick(key: string) {
+		picked = key;
+		factIndex = 0;
+	}
+	function step(by: number) {
+		if (!facts.length) return;
+		factIndex = (factIndex + by + facts.length) % facts.length;
+	}
+	function stepObj(by: number) {
+		if (!pickedObj) return;
+		objFact = (objFact + by + pickedObj.facts.length) % pickedObj.facts.length;
+	}
+
+	// One request per object, and only when its section is opened. page_size=1
+	// matters more than the image itself: the default search reply is 201 kB of
+	// JSON for one URL, this is 3 kB. NASA has no variant smaller than ~small,
+	// so everything else has to come from simply not asking.
+	async function fetchShot(key: string, query: string) {
+		if (key in shots) return;
+		shots = { ...shots, [key]: null };
 		try {
 			const r = await fetch(
-				`https://images-api.nasa.gov/search?q=${encodeURIComponent(d.query)}&media_type=image`
+				`https://images-api.nasa.gov/search?q=${encodeURIComponent(query)}&media_type=image&page_size=1`
 			);
 			const j = await r.json();
 			const it = j?.collection?.items?.[0];
 			const url = it?.links?.[0]?.href;
-			if (url) images = { ...images, [d.key]: { url, title: it.data?.[0]?.title ?? d.name } };
+			if (url) shots = { ...shots, [key]: { url, title: it.data?.[0]?.title ?? '' } };
 		} catch {
-			/* card just stays text only */
+			/* the card just stays text only */
 		}
 	}
 
-	function openDeep(d: DeepSky) {
-		pickedDeep = d.key;
-		loadImage(d);
+	async function toggleCat(key: string) {
+		if (openCat === key) {
+			openCat = null;
+			return;
+		}
+		openCat = key;
+		pickedObj = null;
+		const cat = CATEGORIES.find((c) => c.key === key);
+		if (!cat) return;
+		loadingCat = key;
+		await Promise.all(cat.items.map((i) => fetchShot(i.key, i.query)));
+		loadingCat = null;
+	}
+
+	function openObj(o: SkyObject) {
+		pickedObj = pickedObj?.key === o.key ? null : o;
+		objFact = 0;
 	}
 </script>
 
@@ -125,12 +146,15 @@
 
 <div class="space">
 	<header class="head">
-		<a class="back" href="/sky">← Night sky</a>
-		<h1>The neighbourhood</h1>
-		<p>Planets are drawn where they actually are right now. Orbit spacing is logarithmic.</p>
+		<div class="navrow">
+			<a class="back" href="/">← Binder</a>
+			<a class="back" href="/sky">← Night sky</a>
+		</div>
+		<h1>Solar system</h1>
+		<p class="sub">Everything is drawn where it actually is right now. Orbit spacing is logarithmic.</p>
 		<div class="tabs">
-			<button class:on={tab === 'system'} onclick={() => (tab = 'system')}>Solar system</button>
-			<button class:on={tab === 'deep'} onclick={() => (tab = 'deep')}>Deep sky</button>
+			<button class:on={tab === 'system'} onclick={() => (tab = 'system')}>Planets</button>
+			<button class:on={tab === 'deep'} onclick={() => (tab = 'deep')}>Everything else</button>
 		</div>
 	</header>
 
@@ -167,51 +191,26 @@
 					<circle cx="0" cy="0" r="104" fill="url(#deepspace)" />
 
 					{#each placed as q (q.p.key)}
-						<circle
-							class="orbit"
-							class:lit={picked === q.p.key || hovered === q.p.key}
-							cx="0"
-							cy="0"
-							r={q.r}
-						/>
+						<circle class="orbit" class:lit={picked === q.p.key || hovered === q.p.key} cx="0" cy="0" r={q.r} />
 					{/each}
 
 					{#each placed as q (q.p.key)}
 						{#each q.trail as t, i (i)}
-							<line
-								x1={t.x1}
-								y1={t.y1}
-								x2={t.x2}
-								y2={t.y2}
-								stroke={q.p.color}
-								stroke-opacity={t.o}
-								stroke-width={q.br * 0.34}
-								stroke-linecap="round"
-							/>
+							<line x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={q.p.color} stroke-opacity={t.o} stroke-width={q.br * 0.34} stroke-linecap="round" />
 						{/each}
 					{/each}
 
 					<circle cx="0" cy="0" r="26" fill="url(#corona)" />
-					<circle class="sunface" cx="0" cy="0" r="7.5" fill="url(#sunface)" />
-					<circle
-						class="sunhit"
-						cx="0"
-						cy="0"
-						r="14"
-						onclick={() => (picked = 'Sun')}
-						role="button"
-						tabindex="0"
-						aria-label="Sun"
-						onkeydown={(e) => e.key === 'Enter' && (picked = 'Sun')}
-					/>
+					<circle cx="0" cy="0" r="7.5" fill="url(#sunface)" />
+					<circle class="sunhit" cx="0" cy="0" r="14" onclick={() => pick('Sun')} role="button" tabindex="0" aria-label="Sun" onkeydown={(e) => e.key === 'Enter' && pick('Sun')} />
 
 					{#each placed as q (q.p.key)}
 						<g
 							class="planet"
 							class:sel={picked === q.p.key}
 							transform="translate({q.x} {q.y})"
-							onclick={() => (picked = q.p.key)}
-							onkeydown={(e) => e.key === 'Enter' && (picked = q.p.key)}
+							onclick={() => pick(q.p.key)}
+							onkeydown={(e) => e.key === 'Enter' && pick(q.p.key)}
 							onmouseenter={() => (hovered = q.p.key)}
 							onmouseleave={() => (hovered = null)}
 							role="button"
@@ -219,31 +218,13 @@
 							aria-label={q.p.name}
 						>
 							<circle class="hit" r={Math.max(8, q.br + 5)} />
-							<circle
-								class="bloom"
-								r={q.br * 2.4}
-								fill={q.p.color}
-								opacity={picked === q.p.key || hovered === q.p.key ? 0.28 : 0.13}
-							/>
+							<circle class="bloom" r={q.br * 2.4} fill={q.p.color} opacity={picked === q.p.key || hovered === q.p.key ? 0.28 : 0.13} />
 							{#if q.p.ring}
-								<g transform="rotate(-16)">
-									<ellipse
-										class="ringback"
-										rx={q.br * 2}
-										ry={q.br * 0.62}
-										stroke={q.p.color}
-									/>
-								</g>
+								<g transform="rotate(-16)"><ellipse class="ringback" rx={q.br * 2} ry={q.br * 0.62} stroke={q.p.color} /></g>
 							{/if}
 							<circle r={q.br} fill="url(#g-{q.p.key})" />
 							{#if q.p.ring}
-								<g transform="rotate(-16)">
-									<path
-										class="ringfront"
-										d="M {-q.br * 2} 0 A {q.br * 2} {q.br * 0.62} 0 0 0 {q.br * 2} 0"
-										stroke={q.p.color}
-									/>
-								</g>
+								<g transform="rotate(-16)"><path class="ringfront" d="M {-q.br * 2} 0 A {q.br * 2} {q.br * 0.62} 0 0 0 {q.br * 2} 0" stroke={q.p.color} /></g>
 							{/if}
 							{#if picked === q.p.key || hovered === q.p.key}
 								<circle class="halo" r={q.br + 3.2} />
@@ -252,25 +233,18 @@
 						</g>
 					{/each}
 				</svg>
-				<p class="stamp">
-					{now.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
-				</p>
+				<p class="stamp">{now.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</p>
 			</div>
 
 			<aside class="detail">
-				{#if picked === 'Sun'}
-					<span class="glyph" style="color:{SUN.color}">{SUN.glyph}</span>
-					<h2>{SUN.name}</h2>
-					<p class="tag">{SUN.tagline}</p>
-					<dl>
-						<div><dt>Radius</dt><dd>{fmtNum(SUN.radiusKm)} km</dd></div>
-					</dl>
-					<ul>
-						{#each SUN.facts as f (f)}<li>{f}</li>{/each}
-					</ul>
-				{:else if current}
-					{#key current.p.key}
-						<div in:fly={{ y: 8, duration: 160 }}>
+				{#key picked}
+					<div in:fly={{ y: 8, duration: 160 }}>
+						{#if picked === 'Sun'}
+							<span class="glyph" style="color:{SUN.color}">{SUN.glyph}</span>
+							<h2>{SUN.name}</h2>
+							<p class="tag">{SUN.tagline}</p>
+							<dl><div><dt>Radius</dt><dd>{fmtNum(SUN.radiusKm)} km</dd></div></dl>
+						{:else if current}
 							<span class="glyph" style="color:{current.p.color}">{current.p.glyph}</span>
 							<h2>{current.p.name}</h2>
 							<p class="tag">{current.p.tagline}</p>
@@ -282,42 +256,90 @@
 								<div><dt>Year</dt><dd>{current.p.yearLength}</dd></div>
 								<div><dt>Moons</dt><dd>{current.p.moons}</dd></div>
 							</dl>
-							<ul>
-								{#each current.p.facts as f (f)}<li>{f}</li>{/each}
-							</ul>
+						{/if}
+					</div>
+				{/key}
+
+				{#if facts.length}
+					<div class="carousel">
+						<div class="cnav">
+							<button onclick={() => step(-1)} aria-label="Previous fact">‹</button>
+							<span>{factIndex + 1} / {facts.length}</span>
+							<button onclick={() => step(1)} aria-label="Next fact">›</button>
 						</div>
-					{/key}
+						{#key factIndex}
+							<p class="fact" in:fade={{ duration: 140 }}>{facts[factIndex]}</p>
+						{/key}
+						<div class="pips">
+							{#each facts as _, i (i)}
+								<button class="pip" class:on={i === factIndex} onclick={() => (factIndex = i)} aria-label="Fact {i + 1}"></button>
+							{/each}
+						</div>
+					</div>
 				{/if}
 			</aside>
 		</div>
 	{:else}
-		<div class="deepgrid" in:fade={{ duration: 150 }}>
-			{#each DEEP_SKY as d (d.key)}
-				<button class="dcard" class:on={pickedDeep === d.key} onclick={() => openDeep(d)}>
-					<strong>{d.name}</strong>
-					<span class="kind">{d.kind}</span>
-					<span class="tag">{d.tagline}</span>
-				</button>
+		<div class="sections" in:fade={{ duration: 150 }}>
+			{#each CATEGORIES as cat (cat.key)}
+				<section class="cat" class:open={openCat === cat.key}>
+					<button class="cathead" onclick={() => toggleCat(cat.key)} aria-expanded={openCat === cat.key}>
+						<span class="caticon">{cat.icon}</span>
+						<span class="cattext">
+							<strong>{cat.name}</strong>
+							<em>{cat.blurb}</em>
+						</span>
+						<span class="count">{cat.items.length}</span>
+						<span class="chev" class:up={openCat === cat.key}>▾</span>
+					</button>
+
+					{#if openCat === cat.key}
+						<div class="catbody" transition:fly={{ y: -6, duration: 160 }}>
+							<div class="gallery">
+								{#each cat.items as it (it.key)}
+									<button class="tile" class:on={pickedObj?.key === it.key} onclick={() => openObj(it)}>
+										{#if shots[it.key]}
+											<img src={shots[it.key]!.url} alt={it.name} loading="lazy" width="320" height="200" />
+										{:else}
+											<span class="ph">{loadingCat === cat.key ? '…' : '—'}</span>
+										{/if}
+										<span class="tname">{it.name}</span>
+									</button>
+								{/each}
+							</div>
+
+							{#if pickedObj && cat.items.some((i) => i.key === pickedObj?.key)}
+								<div class="objpanel" transition:fly={{ y: 8, duration: 160 }}>
+									<div class="objhead">
+										<h3>{pickedObj.name}</h3>
+										<span class="objkind">{pickedObj.kind} · {pickedObj.distance}</span>
+										<p class="tag">{pickedObj.tagline}</p>
+									</div>
+									<div class="carousel">
+										<div class="cnav">
+											<button onclick={() => stepObj(-1)} aria-label="Previous fact">‹</button>
+											<span>{objFact + 1} / {pickedObj.facts.length}</span>
+											<button onclick={() => stepObj(1)} aria-label="Next fact">›</button>
+										</div>
+										{#key objFact}
+											<p class="fact" in:fade={{ duration: 140 }}>{pickedObj.facts[objFact]}</p>
+										{/key}
+										<div class="pips">
+											{#each pickedObj.facts as _, i (i)}
+												<button class="pip" class:on={i === objFact} onclick={() => (objFact = i)} aria-label="Fact {i + 1}"></button>
+											{/each}
+										</div>
+									</div>
+									{#if shots[pickedObj.key]?.title}
+										<p class="credit">Image: NASA · {shots[pickedObj.key]!.title}</p>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</section>
 			{/each}
 		</div>
-
-		{#if deep}
-			<section class="dpanel" in:fly={{ y: 10, duration: 180 }}>
-				{#if images[deep.key]}
-					<img src={images[deep.key]!.url} alt={images[deep.key]!.title} loading="lazy" />
-				{/if}
-				<div>
-					<h2>{deep.name}</h2>
-					<p class="tag">{deep.kind} · {deep.distance}</p>
-					<ul>
-						{#each deep.facts as f (f)}<li>{f}</li>{/each}
-					</ul>
-					{#if images[deep.key]}
-						<p class="credit">Image: NASA · {images[deep.key]!.title}</p>
-					{/if}
-				</div>
-			</section>
-		{/if}
 	{/if}
 </div>
 
@@ -339,9 +361,13 @@
 		max-width: 1200px;
 		margin: 0 auto 1.2rem;
 	}
+	.navrow {
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 0.8rem;
+	}
 	.back {
 		display: inline-block;
-		margin-bottom: 0.8rem;
 		padding: 0.4rem 0.75rem;
 		border-radius: 10px;
 		border: 1px solid rgba(255, 255, 255, 0.12);
@@ -350,11 +376,14 @@
 		text-decoration: none;
 		font-size: 0.85rem;
 	}
+	.back:hover {
+		border-color: rgba(255, 170, 90, 0.6);
+	}
 	h1 {
 		margin: 0;
 		font-size: clamp(1.5rem, 4vw, 2.2rem);
 	}
-	.head p {
+	.sub {
 		margin: 0.25rem 0 0.9rem;
 		font-size: 0.85rem;
 		color: #9a93bd;
@@ -401,7 +430,6 @@
 			radial-gradient(1px 1px at 76% 18%, rgba(255, 255, 255, 0.4), transparent 60%),
 			radial-gradient(1px 1px at 62% 82%, rgba(255, 255, 255, 0.45), transparent 60%),
 			radial-gradient(1px 1px at 28% 70%, rgba(255, 255, 255, 0.35), transparent 60%),
-			radial-gradient(1px 1px at 88% 56%, rgba(255, 255, 255, 0.3), transparent 60%),
 			radial-gradient(circle at 50% 50%, rgba(60, 40, 120, 0.18), transparent 62%),
 			rgba(6, 4, 16, 0.72);
 	}
@@ -443,7 +471,6 @@
 		stroke: rgba(255, 255, 255, 0.75);
 		stroke-width: 0.45;
 	}
-	/* back half sits under the globe, front half is drawn over it */
 	.ringback,
 	.ringfront {
 		fill: none;
@@ -491,7 +518,7 @@
 		color: #b3abd6;
 	}
 	dl {
-		margin: 0 0 0.9rem;
+		margin: 0;
 		display: grid;
 		gap: 0.3rem;
 	}
@@ -508,78 +535,185 @@
 		margin: 0;
 		font-variant-numeric: tabular-nums;
 	}
-	ul {
-		margin: 0;
-		padding: 0;
-		list-style: none;
-		display: grid;
-		gap: 0.6rem;
-	}
-	li {
-		position: relative;
-		padding-left: 0.9rem;
-		font-size: 0.86rem;
-		line-height: 1.55;
-		color: #bdb6dd;
-	}
-	li::before {
-		content: '·';
-		position: absolute;
-		left: 0.2rem;
-		color: #6f68a0;
-	}
 
-	.deepgrid {
-		max-width: 1200px;
-		margin: 0 auto 1rem;
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-		gap: 0.7rem;
+	.carousel {
+		margin-top: 1rem;
+		padding-top: 0.9rem;
+		border-top: 1px solid rgba(255, 255, 255, 0.08);
 	}
-	.dcard {
-		text-align: left;
-		display: grid;
-		gap: 0.25rem;
-		padding: 0.9rem 1rem;
-		border-radius: 14px;
-		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(255, 255, 255, 0.035);
-		color: inherit;
+	.cnav {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-bottom: 0.5rem;
+	}
+	.cnav span {
+		font-size: 0.75rem;
+		color: #8a83ad;
+		font-variant-numeric: tabular-nums;
+	}
+	.cnav button {
+		width: 1.8rem;
+		height: 1.8rem;
+		border-radius: 8px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.05);
+		color: #d9d6ef;
+		cursor: pointer;
+		font-size: 1rem;
+		line-height: 1;
+	}
+	.cnav button:hover {
+		border-color: rgba(255, 175, 95, 0.7);
+	}
+	.fact {
+		margin: 0;
+		min-height: 4.6rem;
+		font-size: 0.92rem;
+		line-height: 1.6;
+		color: #ddd7f5;
+	}
+	.pips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		margin-top: 0.7rem;
+	}
+	.pip {
+		width: 16px;
+		height: 4px;
+		border: 0;
+		padding: 0;
+		border-radius: 2px;
+		background: rgba(255, 255, 255, 0.16);
 		cursor: pointer;
 	}
-	.dcard:hover,
-	.dcard.on {
-		border-color: rgba(170, 150, 255, 0.6);
-		background: rgba(140, 110, 240, 0.12);
-	}
-	.dcard .kind {
-		font-size: 0.75rem;
-		color: #8f88b4;
-	}
-	.dcard .tag {
-		margin: 0.2rem 0 0;
-		font-size: 0.82rem;
+	.pip.on {
+		background: #ffb45f;
 	}
 
-	.dpanel {
+	.sections {
 		max-width: 1200px;
 		margin: 0 auto;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-		gap: 1rem;
-		padding: 1.1rem;
+		gap: 0.7rem;
+	}
+	.cat {
 		border-radius: 18px;
 		border: 1px solid rgba(255, 255, 255, 0.09);
 		background: rgba(255, 255, 255, 0.035);
+		overflow: hidden;
 	}
-	@media (max-width: 860px) {
-		.dpanel {
-			grid-template-columns: 1fr;
-		}
+	.cat.open {
+		border-color: rgba(170, 150, 255, 0.4);
 	}
-	.dpanel img {
+	.cathead {
 		width: 100%;
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+		padding: 1rem 1.1rem;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+		text-align: left;
+	}
+	.cathead:hover {
+		background: rgba(255, 255, 255, 0.03);
+	}
+	.caticon {
+		font-size: 1.5rem;
+	}
+	.cattext {
+		flex: 1;
+		min-width: 0;
+	}
+	.cattext strong {
+		display: block;
+		font-size: 1.05rem;
+	}
+	.cattext em {
+		font-style: normal;
+		font-size: 0.82rem;
+		color: #8f88b4;
+	}
+	.count {
+		padding: 0.12rem 0.5rem;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.07);
+		font-size: 0.75rem;
+		color: #b3abd6;
+	}
+	.chev {
+		transition: transform 0.2s;
+		color: #8f88b4;
+	}
+	.chev.up {
+		transform: rotate(180deg);
+	}
+
+	.catbody {
+		padding: 0 1.1rem 1.1rem;
+	}
+	.gallery {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 0.6rem;
+	}
+	.tile {
+		position: relative;
+		padding: 0;
 		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(0, 0, 0, 0.35);
+		overflow: hidden;
+		cursor: pointer;
+		color: inherit;
+	}
+	.tile:hover,
+	.tile.on {
+		border-color: rgba(255, 175, 95, 0.75);
+	}
+	.tile img {
+		display: block;
+		width: 100%;
+		height: 108px;
+		object-fit: cover;
+	}
+	.ph {
+		display: grid;
+		place-items: center;
+		height: 108px;
+		color: #6f68a0;
+	}
+	.tname {
+		display: block;
+		padding: 0.45rem 0.6rem;
+		font-size: 0.8rem;
+		text-align: left;
+	}
+
+	.objpanel {
+		margin-top: 0.9rem;
+		padding: 1rem 1.1rem 1.1rem;
+		border-radius: 14px;
+		border: 1px solid rgba(255, 255, 255, 0.09);
+		background: rgba(10, 6, 22, 0.55);
+	}
+	.objhead h3 {
+		margin: 0;
+		font-size: 1.15rem;
+	}
+	.objkind {
+		font-size: 0.78rem;
+		color: #8f88b4;
+	}
+	.objpanel .tag {
+		margin: 0.4rem 0 0;
+	}
+	.objpanel .carousel {
+		margin-top: 0.8rem;
 	}
 	.credit {
 		margin: 0.8rem 0 0;
