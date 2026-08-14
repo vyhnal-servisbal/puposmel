@@ -1,7 +1,3 @@
-// Everything beyond the planets, grouped into the sections the page renders.
-// `query` feeds the NASA image library; nothing here is fetched until a section
-// is actually opened.
-
 export type SkyObject = {
 	key: string;
 	name: string;
