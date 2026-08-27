@@ -4,6 +4,7 @@
 	import { listSets, type CardSet } from '$lib/cardApi';
 	import { packs } from '$lib/packStore.svelte';
 	import { TIER_COLORS, TIER_NAMES, type PackCard } from '$lib/packs';
+	import { loadLook, eraColor, NO_ART, type Look } from '$lib/setLook';
 
 	let sets = $state<CardSet[]>([]);
 	let query = $state('');
@@ -27,33 +28,6 @@
 	// so they are shown but marked rather than quietly dropped.
 	const MIN_POOL = 20;
 
-	// one colour per era, so the picker reads as a timeline rather than 218 identical tiles
-	const ERA: Record<string, string> = {
-		base: '#e8c15a',
-		gym: '#c98b4b',
-		neo: '#8fd4c4',
-		lc: '#d8b36a',
-		ecard: '#7fb2e0',
-		ex: '#6fd3a8',
-		pop: '#e58fb8',
-		tk: '#9aa3c4',
-		dp: '#8fa9e6',
-		pl: '#b9a6e8',
-		hgss: '#e0b46a',
-		col: '#d6d0a8',
-		bw: '#a8b4c4',
-		mc: '#e6a24b',
-		xy: '#5aa9e6',
-		sm: '#ff9d5c',
-		swsh: '#7fd4ff',
-		sv: '#ff7a6a',
-		tcgp: '#ffd166',
-		me: '#c07bff',
-		misc: '#8a83ad'
-	};
-	function eraColor(id?: string): string {
-		return ERA[id ?? ''] ?? '#8a83ad';
-	}
 
 	let filtered = $derived.by(() => {
 		const q = query.trim().toLowerCase();
@@ -66,9 +40,23 @@
 	let remaining = $derived(cards.slice(idx));
 	let finished = $derived(!!pack && (mode === 'instant' || idx >= cards.length));
 
+	let look = $state<Look | null>(null);
+
 	function choose(s: CardSet) {
+		if (NO_ART.has(s.id)) return;
+		look = null;
 		packs.load(s.id, s.name);
+		loadLook(s.id, s.logo).then((l) => {
+			if (packs.setId === s.id) look = l;
+		});
 	}
+
+	// the wrapper is tinted from the logo when one exists, era colour otherwise
+	let wrapStyle = $derived(
+		look
+			? `--base:${look.base}; --accent:${look.accent}; --ink:${look.ink}`
+			: `--base:#241a4e; --accent:${eraColor(packs.series)}; --ink:${eraColor(packs.series)}`
+	);
 
 	// idle -> tearing (the crimp rips off) -> revealing (cards come out)
 	let phase = $state<'idle' | 'tearing' | 'revealing'>('idle');
@@ -181,7 +169,10 @@
 					<button
 						class="setbtn"
 						class:small={(s.total ?? 0) < MIN_POOL}
+						class:dead={NO_ART.has(s.id)}
 						style="--e:{eraColor(s.series)}"
+						disabled={NO_ART.has(s.id)}
+						title={NO_ART.has(s.id) ? 'This set has no card images' : s.name}
 						onclick={() => choose(s)}
 					>
 						<span class="logowrap">
@@ -193,7 +184,11 @@
 						</span>
 						<strong>{s.name}</strong>
 						<span class="setmeta">{s.id} · {s.total ?? '?'} cards</span>
-						{#if (s.total ?? 0) < MIN_POOL}<em>tiny pool</em>{/if}
+						{#if NO_ART.has(s.id)}
+							<em class="dead">no images</em>
+						{:else if (s.total ?? 0) < MIN_POOL}
+							<em>tiny pool</em>
+						{/if}
 					</button>
 				{/each}
 			</div>
@@ -215,7 +210,13 @@
 		<section class="mid"><p class="err">Could not load that set: {packs.error}</p></section>
 	{:else if !pack}
 		<section class="mid" in:fade={{ duration: 150 }}>
-			<button class="pack" class:tearing={phase === 'tearing'} onclick={open} disabled={phase !== 'idle'}>
+			<button
+				class="pack"
+				class:tearing={phase === 'tearing'}
+				style={wrapStyle}
+				onclick={open}
+				disabled={phase !== 'idle'}
+			>
 				<span class="crimp crimp-a"></span>
 				<span class="foil">
 					{#if packs.hero?.image}
@@ -584,9 +585,12 @@
 	.crimp {
 		position: relative;
 		background:
-			repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.35) 0 3px, transparent 3px 7px),
-			linear-gradient(180deg, #6a5ac4, #3b2f78);
-		z-index: 2;
+			repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.38) 0 3px, transparent 3px 7px),
+			linear-gradient(
+				180deg,
+				color-mix(in srgb, var(--accent) 55%, #fff 6%),
+				color-mix(in srgb, var(--base) 80%, #000)
+			);
 	}
 	.crimp-a {
 		border-radius: 9px 9px 2px 2px;
@@ -602,7 +606,12 @@
 		display: grid;
 		grid-template-rows: 1fr auto;
 		overflow: hidden;
-		background: linear-gradient(165deg, #3b2a78, #241a4e 55%, #140d2c);
+		background: linear-gradient(
+			165deg,
+			color-mix(in srgb, var(--accent) 34%, var(--base)),
+			var(--base) 52%,
+			color-mix(in srgb, var(--base) 72%, #000)
+		);
 	}
 	/* the chase card of the set stands in for the artwork a real wrapper carries;
 	   blown up and offset so only the illustration area shows, never the frame */
@@ -618,8 +627,13 @@
 		position: absolute;
 		inset: 0;
 		background:
-			linear-gradient(180deg, rgba(10, 6, 26, 0.72), rgba(10, 6, 26, 0.12) 38%, rgba(8, 5, 22, 0.9)),
-			radial-gradient(70% 40% at 50% 12%, rgba(255, 214, 150, 0.28), transparent 65%);
+			linear-gradient(
+				180deg,
+				color-mix(in srgb, var(--base) 82%, transparent),
+				color-mix(in srgb, var(--base) 18%, transparent) 40%,
+				color-mix(in srgb, var(--base) 92%, #000)
+			),
+			radial-gradient(70% 40% at 50% 14%, color-mix(in srgb, var(--accent) 40%, transparent), transparent 68%);
 	}
 	.shine {
 		position: absolute;
@@ -670,8 +684,19 @@
 		font-size: 0.72rem;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: #d8cff5;
-		text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+		color: var(--ink);
+		text-shadow: 0 1px 6px rgba(0, 0, 0, 0.85);
+	}
+	.setbtn.dead {
+		opacity: 0.34;
+		cursor: not-allowed;
+	}
+	.setbtn.dead:hover {
+		transform: none;
+		border-color: color-mix(in srgb, var(--e) 26%, transparent);
+	}
+	em.dead {
+		color: #b0788a;
 	}
 
 	/* the rip, then the wrapper itself is tossed to the right and gone, so the
@@ -738,14 +763,18 @@
 		border-radius: 12px;
 		display: block;
 	}
-	/* slides out of the pack, so it arrives from the right and travels up-left */
+	/* no fly-in: the card is already sitting there, exactly as it would be in your
+	   hand. Clicking slides it up and to the left and the one underneath moves
+	   forward on its own transition. */
 	.card.top {
 		cursor: pointer;
-		animation: draw 0.36s cubic-bezier(0.18, 0.7, 0.24, 1) both;
 	}
 	.card.leaving {
-		transform: translate(-62%, -34%) rotate(-11deg) scale(0.94);
+		transform: translate(-78%, -46%) rotate(-13deg) scale(0.92);
 		opacity: 0;
+		transition:
+			transform 0.3s cubic-bezier(0.36, 0, 0.66, -0.2),
+			opacity 0.3s ease-in;
 	}
 	.card.hit img {
 		box-shadow:
@@ -902,19 +931,6 @@
 		}
 		50% {
 			transform: translateX(40%);
-		}
-	}
-	@keyframes draw {
-		from {
-			transform: translate(58%, 26%) rotate(7deg) scale(0.88);
-			opacity: 0;
-		}
-		60% {
-			opacity: 1;
-		}
-		to {
-			transform: translate(0, 0) rotate(0) scale(1);
-			opacity: 1;
 		}
 	}
 	@keyframes rip {
