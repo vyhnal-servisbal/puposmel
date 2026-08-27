@@ -4,8 +4,15 @@
 	let {
 		card,
 		interactive = true,
-		showHolo = true
-	}: { card: PokemonCard; interactive?: boolean; showHolo?: boolean } = $props();
+		showHolo = true,
+		forceHolo = false
+	}: {
+		card: PokemonCard;
+		interactive?: boolean;
+		showHolo?: boolean;
+		// pack opening knows the real tier, which beats guessing from the rarity name
+		forceHolo?: boolean;
+	} = $props();
 
 	let el = $state<HTMLDivElement>();
 	let rx = $state(0); // rotateX (deg)
@@ -17,7 +24,7 @@
 
 	// holo shine only for foil-ish rarities (and when not disabled, e.g. plain-tilt preview)
 	const isHolo = $derived(
-		showHolo && /holo|rare|rainbow|galaxy|foil|secret|amazing/i.test(card.rarity ?? '')
+		showHolo && (forceHolo || /holo|rare|rainbow|galaxy|foil|secret|amazing/i.test(card.rarity ?? ''))
 	);
 
 	function move(e: PointerEvent) {

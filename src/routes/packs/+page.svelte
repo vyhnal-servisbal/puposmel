@@ -3,7 +3,8 @@
 	import { fade, fly, scale } from 'svelte/transition';
 	import { listSets, type CardSet } from '$lib/cardApi';
 	import { packs } from '$lib/packStore.svelte';
-	import { TIER_COLORS, TIER_NAMES, type PackCard } from '$lib/packs';
+	import { TIER_COLORS, TIER_NAMES, raritySymbol, type PackCard } from '$lib/packs';
+	import Card from '$lib/components/Card.svelte';
 	import { loadLook, eraColor, NO_ART, type Look } from '$lib/setLook';
 
 	let sets = $state<CardSet[]>([]);
@@ -154,10 +155,6 @@
 	{#if !packs.setId}
 		<section class="picker" in:fade={{ duration: 150 }}>
 			<h1>Pick a set</h1>
-			<p class="sub">
-				Real rarity pools straight from the card database. Pack structure and pull rates follow the
-				community numbers for that era, because official ones have never been published.
-			</p>
 			<div class="searchrow">
 				<input class="search" placeholder="Search sets..." bind:value={query} />
 				<span class="tally">
@@ -258,17 +255,28 @@
 				{#each remaining.slice(0, 3).reverse() as c, i (c.slot)}
 					{@const depth = Math.min(remaining.length, 3) - 1 - i}
 					{@const isTop = depth === 0}
+					<!-- the glow belongs to the top card only. Rendering it on the ones
+					     underneath lit the stack up and gave the hit away before you had
+					     turned to it. -->
 					<button
 						class="card"
 						class:top={isTop}
 						class:leaving={isTop && leaving}
-						class:hit={c.hit}
+						class:hit={isTop && c.hit}
 						style="--c:{TIER_COLORS[c.tier]}; --d:{depth}; z-index:{i}"
 						onclick={() => isTop && next()}
 						disabled={!isTop}
 					>
-						<img src={c.image} alt={c.name} draggable="false" />
-						{#if c.hit}<span class="beam"></span>{/if}
+						{#if isTop && c.hit}<span class="beam"></span>{/if}
+						<span class="cardbox">
+							<Card card={c} interactive={isTop} forceHolo={c.tier >= 2 || c.asReverse} />
+						</span>
+						{#if isTop}
+							<span class="tag" style="--c:{TIER_COLORS[c.tier]}">
+								<b>{raritySymbol(c.rarity)}</b>
+								{c.asReverse ? 'Reverse holo' : c.rarity}
+							</span>
+						{/if}
 					</button>
 				{/each}
 			</div>
@@ -295,7 +303,10 @@
 						<img src={c.image} alt={c.name} loading="lazy" />
 						<span class="meta">
 							<b>{c.name}</b>
-							<i style="color:{TIER_COLORS[c.tier]}">{c.rarity}</i>
+							<i style="color:{TIER_COLORS[c.tier]}">
+								<em>{raritySymbol(c.rarity)}</em>
+								{c.asReverse ? 'Reverse holo' : c.rarity}
+							</i>
 						</span>
 						{#if c.hit}<span class="corner" style="background:{TIER_COLORS[c.tier]}"></span>{/if}
 					</button>
@@ -425,13 +436,6 @@
 		-webkit-background-clip: text;
 		background-clip: text;
 		color: transparent;
-	}
-	.sub {
-		margin: 0.35rem 0 1rem;
-		max-width: 62ch;
-		font-size: 0.86rem;
-		line-height: 1.6;
-		color: #9a93bd;
 	}
 	.searchrow {
 		display: flex;
@@ -756,12 +760,35 @@
 			transform 0.26s ease,
 			opacity 0.26s ease;
 	}
-	.card img {
+	/* the card art sits above the glow; before this the beam painted over the
+	   artwork because it came later in the markup */
+	.cardbox {
+		position: relative;
+		z-index: 1;
+		display: block;
 		width: 100%;
 		height: 100%;
-		object-fit: contain;
-		border-radius: 12px;
-		display: block;
+	}
+	.tag {
+		position: absolute;
+		left: 50%;
+		bottom: -2.1rem;
+		z-index: 2;
+		transform: translateX(-50%);
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.22rem 0.7rem;
+		border-radius: 999px;
+		border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
+		background: rgba(8, 5, 20, 0.75);
+		font-size: 0.76rem;
+		white-space: nowrap;
+		color: #cfc9ea;
+	}
+	.tag b {
+		color: var(--c);
+		letter-spacing: 0.06em;
 	}
 	/* no fly-in: the card is already sitting there, exactly as it would be in your
 	   hand. Clicking slides it up and to the left and the one underneath moves
@@ -776,10 +803,16 @@
 			transform 0.3s cubic-bezier(0.36, 0, 0.66, -0.2),
 			opacity 0.3s ease-in;
 	}
-	.card.hit img {
+	/* glow around the card, never on top of it */
+	.card.hit .cardbox::after {
+		content: '';
+		position: absolute;
+		inset: -3px;
+		border-radius: 15px;
 		box-shadow:
 			0 0 0 2px var(--c),
-			0 0 34px var(--c);
+			0 0 30px color-mix(in srgb, var(--c) 70%, transparent);
+		pointer-events: none;
 	}
 	.revtag {
 		color: #9ecbff;
@@ -787,10 +820,11 @@
 	}
 	.beam {
 		position: absolute;
-		inset: -14%;
+		inset: -18%;
+		z-index: 0;
 		border-radius: 50%;
 		background: radial-gradient(circle, var(--c), transparent 62%);
-		opacity: 0.35;
+		opacity: 0.3;
 		pointer-events: none;
 		animation: pulse 1.6s ease-in-out infinite;
 	}
@@ -853,8 +887,16 @@
 		text-overflow: ellipsis;
 	}
 	.meta i {
+		display: block;
 		font-style: normal;
 		font-size: 0.7rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.meta em {
+		font-style: normal;
+		letter-spacing: 0.06em;
 	}
 	.corner {
 		position: absolute;

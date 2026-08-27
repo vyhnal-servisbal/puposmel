@@ -109,6 +109,61 @@ export const TIER_NAMES = [
 	'Chase'
 ];
 
+// The symbol printed in the corner of the real card. Physical sets use a circle,
+// a diamond and a star; Pocket counts diamonds and stars instead, and tops out
+// at a crown. Anything unmapped falls back to its tier.
+const SYMBOLS: Record<string, string> = {
+	Common: '●',
+	None: '●',
+	Uncommon: '◆',
+	Rare: '★',
+	'Rare Holo': '★',
+	'Holo Rare': '★',
+	Promo: '★',
+	'Classic Collection': '★',
+	'Double rare': '★★',
+	'Ultra Rare': '★★',
+	'Holo Rare V': '★★',
+	'Holo Rare VMAX': '★★',
+	'Holo Rare VSTAR': '★★',
+	'Rare Holo LV.X': '★★',
+	'Rare PRIME': '★★',
+	LEGEND: '★★',
+	'ACE SPEC Rare': '★★',
+	'Amazing Rare': '★★',
+	'Radiant Rare': '★★',
+	'Full Art Trainer': '★★',
+	'Illustration rare': '★★',
+	'Shiny rare': '★★',
+	'Shiny rare V': '★★',
+	'Shiny rare VMAX': '★★',
+	'Black White Rare': '★★',
+	'Special illustration rare': '★★★',
+	'Shiny Ultra Rare': '★★★',
+	'Secret Rare': '★★★',
+	'Hyper rare': '★★★',
+	'Mega Hyper Rare': '★★★',
+
+	'One Diamond': '◆',
+	'Two Diamond': '◆◆',
+	'Three Diamond': '◆◆◆',
+	'Four Diamond': '◆◆◆◆',
+	'One Star': '★',
+	'Two Star': '★★',
+	'Three Star': '★★★',
+	'One Shiny': '✦',
+	'Two Shiny': '✦✦',
+	Crown: '♛'
+};
+
+export function raritySymbol(rarity?: string): string {
+	if (!rarity) return '●';
+	const hit = SYMBOLS[rarity];
+	if (hit) return hit;
+	const t = tierOf(rarity);
+	return t <= 0 ? '●' : t === 1 ? '◆' : '★'.repeat(Math.min(3, t - 1));
+}
+
 export const TIER_COLORS = [
 	'#8a83ad',
 	'#6fd3a8',
