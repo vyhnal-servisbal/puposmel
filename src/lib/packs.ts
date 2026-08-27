@@ -16,6 +16,8 @@ export interface PoolCard extends PokemonCard {
 	rarity: string;
 	tier: number;
 	variants: Variants;
+	price?: number; // cardmarket trend, in EUR, at the time the set was read
+	priceUnit?: string;
 }
 
 export interface PackCard extends PoolCard {
@@ -269,28 +271,37 @@ function one<T>(list: T[]): T | null {
 	return list.length ? list[Math.floor(Math.random() * list.length)] : null;
 }
 
+// A real booster never contains the same card twice, so every draw skips what is
+// already in the pack. Tiny sets can run out of candidates, and there the filter
+// is dropped rather than returning nothing.
+function fresh(list: PoolCard[], used: Set<string>): PoolCard[] {
+	const left = list.filter((c) => !used.has(c.id));
+	return left.length ? left : list;
+}
+
 // Falls back down the rarity ladder rather than returning nothing, because
 // plenty of sets do not contain every rarity the weight table mentions.
 function drawRarity(
 	groups: Record<string, PoolCard[]>,
 	want: string,
-	pool: PoolCard[]
+	pool: PoolCard[],
+	used: Set<string>
 ): PoolCard | null {
-	const exact = one(groups[want] ?? []);
+	const exact = one(fresh(groups[want] ?? [], used));
 	if (exact) return exact;
 	const target = tierOf(want);
 	for (let t = target; t >= 0; t--) {
 		const cands = pool.filter((c) => c.tier === t);
-		if (cands.length) return one(cands);
+		if (cands.length) return one(fresh(cands, used));
 	}
-	return one(pool);
+	return one(fresh(pool, used));
 }
 
-function drawTier(pool: PoolCard[], min: number): PoolCard | null {
+function drawTier(pool: PoolCard[], min: number, used: Set<string>): PoolCard | null {
 	const cands = pool.filter((c) => c.tier >= min);
-	if (cands.length) return one(cands);
+	if (cands.length) return one(fresh(cands, used));
 	const lower = pool.filter((c) => c.tier >= min - 1);
-	return lower.length ? one(lower) : one(pool);
+	return lower.length ? one(fresh(lower, used)) : one(fresh(pool, used));
 }
 
 export function buildPack(pool: PoolCard[], setId: string, model: ModelKey): OpenedPack {
@@ -298,42 +309,45 @@ export function buildPack(pool: PoolCard[], setId: string, model: ModelKey): Ope
 	const groups = byRarity(pool);
 	const god = Math.random() < cfg.godChance;
 	const picked: { card: PoolCard; asReverse: boolean }[] = [];
+	const used = new Set<string>();
 
 	const take = (c: PoolCard | null, asReverse = false) => {
-		if (c) picked.push({ card: c, asReverse });
+		if (!c) return;
+		picked.push({ card: c, asReverse });
+		used.add(c.id);
 	};
 
 	if (god) {
 		// Pocket god packs are one star and above; physical ones are "all hits",
 		// which in practice means ultra and above.
 		const min = model === 'pocket' ? 4 : 3;
-		for (let i = 0; i < cfg.size; i++) take(drawTier(pool, min));
+		for (let i = 0; i < cfg.size; i++) take(drawTier(pool, min, used));
 	} else if (model === 'pocket') {
-		for (let i = 0; i < 3; i++) take(drawRarity(groups, 'One Diamond', pool));
-		take(drawRarity(groups, pickWeighted(POCKET_SLOT4), pool));
-		take(drawRarity(groups, pickWeighted(POCKET_SLOT5), pool));
+		for (let i = 0; i < 3; i++) take(drawRarity(groups, 'One Diamond', pool, used));
+		take(drawRarity(groups, pickWeighted(POCKET_SLOT4), pool, used));
+		take(drawRarity(groups, pickWeighted(POCKET_SLOT5), pool, used));
 	} else if (model === 'modern') {
-		for (let i = 0; i < 4; i++) take(drawRarity(groups, 'Common', pool));
-		for (let i = 0; i < 3; i++) take(drawRarity(groups, 'Uncommon', pool));
+		for (let i = 0; i < 4; i++) take(drawRarity(groups, 'Common', pool, used));
+		for (let i = 0; i < 3; i++) take(drawRarity(groups, 'Uncommon', pool, used));
 
 		const reversible = pool.filter((c) => c.variants.reverse);
-		take(one(reversible.length ? reversible : pool), true);
+		take(one(fresh(reversible.length ? reversible : pool, used)), true);
 
 		const second = pickWeighted(MODERN_REVERSE2);
-		if (second === '__reverse') take(one(reversible.length ? reversible : pool), true);
-		else take(drawRarity(groups, second, pool));
+		if (second === '__reverse') take(one(fresh(reversible.length ? reversible : pool, used)), true);
+		else take(drawRarity(groups, second, pool, used));
 
-		take(drawRarity(groups, pickWeighted(MODERN_HIT), pool));
+		take(drawRarity(groups, pickWeighted(MODERN_HIT), pool, used));
 	} else {
-		for (let i = 0; i < 6; i++) take(drawRarity(groups, 'Common', pool));
-		for (let i = 0; i < 3; i++) take(drawRarity(groups, 'Uncommon', pool));
+		for (let i = 0; i < 6; i++) take(drawRarity(groups, 'Common', pool, used));
+		for (let i = 0; i < 3; i++) take(drawRarity(groups, 'Uncommon', pool, used));
 		// one rare per pack, holo roughly every third pack, which is what people
 		// remember from opening Base Set
 		const holos = pool.filter((c) => c.variants.holo);
 		const plain = pool.filter((c) => !c.variants.holo && c.tier >= 2);
 		const wantHolo = holos.length > 0 && Math.random() < CLASSIC_HOLO_CHANCE;
 		const from = wantHolo ? holos : plain.length ? plain : holos;
-		take(one(from.length ? from : pool));
+		take(one(fresh(from.length ? from : pool, used)));
 	}
 
 	const cards: PackCard[] = picked.map((p, i) => ({

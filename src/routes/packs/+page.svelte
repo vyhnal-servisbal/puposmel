@@ -6,6 +6,7 @@
 	import { TIER_COLORS, TIER_NAMES, raritySymbol, type PackCard } from '$lib/packs';
 	import Card from '$lib/components/Card.svelte';
 	import { loadLook, eraColor, NO_ART, type Look } from '$lib/setLook';
+	import { library } from '$lib/libraryStore.svelte';
 
 	let sets = $state<CardSet[]>([]);
 	let query = $state('');
@@ -71,6 +72,9 @@
 			idx = 0;
 			leaving = false;
 			phase = 'revealing';
+			warm(packs.pack?.cards[0]);
+			warm(packs.pack?.cards[1]);
+			if (packs.pack) library.record(packs.pack.cards);
 			const best = Math.max(0, ...(packs.pack?.cards ?? []).map((c) => c.tier));
 			if (packs.pack?.god) flashNow(6);
 			else if (mode === 'instant' && best >= 4) flashNow(best);
@@ -86,6 +90,28 @@
 		phase = 'idle';
 	}
 
+	// Leaving mid-reveal used to strand phase on 'revealing', and since open()
+	// refuses to run unless it is idle, the next pack simply would not open and
+	// the page had to be reloaded.
+	function backToSets() {
+		packs.setId = '';
+		packs.pool = [];
+		packs.pack = null;
+		look = null;
+		phase = 'idle';
+		idx = 0;
+		leaving = false;
+	}
+
+	// space alone drives the whole loop: open, step through, open the next
+	function space() {
+		if (preview) return;
+		if (!packs.setId || packs.loading) return;
+		if (!pack) open();
+		else if (!finished) next();
+		else again();
+	}
+
 	function flashNow(t: number) {
 		flash = t;
 		setTimeout(() => (flash = -1), 900);
@@ -98,13 +124,23 @@
 		setTimeout(() => {
 			idx++;
 			leaving = false;
+			warm(cards[idx + 1]);
 			const c = cards[idx];
 			if (c && c.tier >= 4) flashNow(c.tier);
 		}, 260);
 	}
 
+	// low.webp is 245x337, which is a blurry mess once a card is shown 300px wide
+	// on a high density screen. high.png is 600x825 but also 350kB, so it is only
+	// used for the card actually being looked at, warmed a step ahead of time.
 	function bigImage(c: PackCard): string {
 		return (c.image ?? '').replace('/low.webp', '/high.png');
+	}
+
+	function warm(c?: PackCard) {
+		if (!c?.image) return;
+		const img = new Image();
+		img.src = bigImage(c);
 	}
 
 	function tierLabel(t: number): string {
@@ -116,10 +152,10 @@
 
 <svelte:window
 	onkeydown={(e) => {
-		if (preview && e.key === 'Escape') preview = null;
-		else if (e.key === ' ' && pack && !finished) {
+		if (e.key === 'Escape' && preview) preview = null;
+		else if (e.key === ' ') {
 			e.preventDefault();
-			next();
+			space();
 		}
 	}}
 />
@@ -133,6 +169,7 @@
 		<div class="navrow">
 			<a class="btn" href="/">← Binder</a>
 			<a class="btn" href="/game">Unboxing</a>
+			<a class="btn" href="/library">📚 Library</a>
 		</div>
 
 		<div class="bar">
@@ -145,9 +182,7 @@
 				<span class="chip">{packs.model} · {packs.size} cards</span>
 				<span class="chip">{packs.opened} opened</span>
 				{#if packs.godCount}<span class="chip god">{packs.godCount} god</span>{/if}
-				<button class="btn ghost" onclick={() => { packs.setId = ''; packs.pool = []; packs.pack = null; }}>
-					Change set
-				</button>
+				<button class="btn ghost" onclick={backToSets}>Change set</button>
 			{/if}
 		</div>
 	</header>
@@ -269,7 +304,11 @@
 					>
 						{#if isTop && c.hit}<span class="beam"></span>{/if}
 						<span class="cardbox">
-							<Card card={c} interactive={isTop} forceHolo={c.tier >= 2 || c.asReverse} />
+							<Card
+								card={{ ...c, image: isTop ? bigImage(c) : c.image }}
+								interactive={isTop}
+								forceHolo={c.tier >= 2 || c.asReverse}
+							/>
 						</span>
 						{#if isTop}
 							<span class="tag" style="--c:{TIER_COLORS[c.tier]}">
@@ -940,11 +979,13 @@
 		padding: 1rem;
 		background: rgba(3, 2, 8, 0.82);
 	}
+	/* an explicit width, not a max: the modal centres with place-items, which sizes
+	   its child to the content, and Card has no intrinsic width to give it */
 	.sheet {
 		position: relative;
 		display: grid;
 		gap: 0.7rem;
-		max-width: min(420px, 92vw);
+		width: min(430px, 88vw, calc((100dvh - 9rem) * 0.63));
 	}
 	.bigcard {
 		width: 100%;

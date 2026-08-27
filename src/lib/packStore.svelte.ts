@@ -32,6 +32,13 @@ function writeCache(setId: string, data: CachedPool) {
 	}
 }
 
+// The first value that is actually a positive number, because zero here means
+// "no data for this variant", not "free".
+function firstPositive(vals: unknown[]): number | undefined {
+	for (const v of vals) if (typeof v === 'number' && v > 0) return v;
+	return undefined;
+}
+
 class PackStore {
 	setId = $state('');
 	setName = $state('');
@@ -116,6 +123,21 @@ class PackStore {
 									reverse: !!c.variants?.reverse,
 									holo: !!c.variants?.holo
 								};
+								// cardmarket trend is the closest thing to what a card
+								// actually changes hands for in Europe. The variant keys
+								// are present but set to 0 on plenty of cards, so a plain
+								// ?? chain silently prices a 4 euro rare at nothing.
+								const cm = c.pricing?.cardmarket;
+								const price = firstPositive([
+									cm?.['trend-reverse-holo'],
+									cm?.['trend-holo'],
+									cm?.trend,
+									cm?.avg,
+									cm?.['avg-holo'],
+									cm?.avg7,
+									cm?.avg30
+								]);
+
 								out.push({
 									id: c.id,
 									name: c.name,
@@ -126,7 +148,9 @@ class PackStore {
 									image: `${c.image}/low.webp`,
 									rarity: c.rarity ?? 'None',
 									tier: tierFor(c.rarity, variants, model),
-									variants
+									variants,
+									price,
+									priceUnit: cm?.unit ?? 'EUR'
 								});
 							}
 						}
