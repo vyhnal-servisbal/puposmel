@@ -327,10 +327,20 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="modal" onclick={() => (preview = null)} transition:fade={{ duration: 150 }}>
 			<div class="sheet" onclick={(e) => e.stopPropagation()}>
-				<img src={bigImage(preview)} alt={preview.name} />
+				<!-- same component the binder uses, so the preview tilts and shines
+				     exactly like a card in a page does -->
+				<div class="bigcard">
+					<Card
+						card={{ ...preview, image: bigImage(preview) }}
+						forceHolo={preview.tier >= 2 || preview.asReverse}
+					/>
+				</div>
 				<div class="info">
 					<strong>{preview.name}</strong>
-					<span style="color:{TIER_COLORS[preview.tier]}">{preview.rarity}</span>
+					<span style="color:{TIER_COLORS[preview.tier]}">
+						<em>{raritySymbol(preview.rarity)}</em>
+						{preview.asReverse ? 'Reverse holo' : preview.rarity}
+					</span>
 					<span class="dim">#{preview.number} · {preview.set}</span>
 				</div>
 				<button class="close" onclick={() => (preview = null)}>✕</button>
@@ -728,6 +738,10 @@
 		justify-items: center;
 		gap: 0.7rem;
 	}
+	/* the rarity pill hangs below the card, so the hint needs to clear it */
+	.table .tap {
+		margin-top: 2.4rem;
+	}
 	.counter {
 		font-size: 1.3rem;
 		font-weight: 700;
@@ -932,9 +946,13 @@
 		gap: 0.7rem;
 		max-width: min(420px, 92vw);
 	}
-	.sheet img {
+	.bigcard {
 		width: 100%;
-		border-radius: 14px;
+	}
+	.info em {
+		font-style: normal;
+		letter-spacing: 0.06em;
+		margin-right: 0.3rem;
 	}
 	.info {
 		display: grid;
