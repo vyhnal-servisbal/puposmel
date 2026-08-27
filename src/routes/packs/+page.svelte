@@ -27,6 +27,34 @@
 	// so they are shown but marked rather than quietly dropped.
 	const MIN_POOL = 20;
 
+	// one colour per era, so the picker reads as a timeline rather than 218 identical tiles
+	const ERA: Record<string, string> = {
+		base: '#e8c15a',
+		gym: '#c98b4b',
+		neo: '#8fd4c4',
+		lc: '#d8b36a',
+		ecard: '#7fb2e0',
+		ex: '#6fd3a8',
+		pop: '#e58fb8',
+		tk: '#9aa3c4',
+		dp: '#8fa9e6',
+		pl: '#b9a6e8',
+		hgss: '#e0b46a',
+		col: '#d6d0a8',
+		bw: '#a8b4c4',
+		mc: '#e6a24b',
+		xy: '#5aa9e6',
+		sm: '#ff9d5c',
+		swsh: '#7fd4ff',
+		sv: '#ff7a6a',
+		tcgp: '#ffd166',
+		me: '#c07bff',
+		misc: '#8a83ad'
+	};
+	function eraColor(id?: string): string {
+		return ERA[id ?? ''] ?? '#8a83ad';
+	}
+
 	let filtered = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		if (!q) return sets;
@@ -44,7 +72,7 @@
 
 	// idle -> tearing (the crimp rips off) -> revealing (cards come out)
 	let phase = $state<'idle' | 'tearing' | 'revealing'>('idle');
-	const TEAR_MS = 620;
+	const TEAR_MS = 760; // rip 440ms, then the wrapper is tossed away by 760ms
 
 	function open() {
 		if (phase !== 'idle') return;
@@ -112,7 +140,7 @@
 		<div class="flash" style="--c:{TIER_COLORS[flash]}" transition:fade={{ duration: 220 }}></div>
 	{/if}
 
-	<header class="top">
+	<header class="pagehead">
 		<div class="navrow">
 			<a class="btn" href="/">← Binder</a>
 			<a class="btn" href="/game">Unboxing</a>
@@ -150,9 +178,21 @@
 			</div>
 			<div class="setgrid">
 				{#each filtered as s (s.id)}
-					<button class="setbtn" class:small={(s.total ?? 0) < MIN_POOL} onclick={() => choose(s)}>
+					<button
+						class="setbtn"
+						class:small={(s.total ?? 0) < MIN_POOL}
+						style="--e:{eraColor(s.series)}"
+						onclick={() => choose(s)}
+					>
+						<span class="logowrap">
+							{#if s.logo}
+								<img src={s.logo} alt="" loading="lazy" decoding="async" draggable="false" />
+							{:else}
+								<span class="noLogo">{s.id}</span>
+							{/if}
+						</span>
 						<strong>{s.name}</strong>
-						<span>{s.id} · {s.total ?? '?'} cards</span>
+						<span class="setmeta">{s.id} · {s.total ?? '?'} cards</span>
 						{#if (s.total ?? 0) < MIN_POOL}<em>tiny pool</em>{/if}
 					</button>
 				{/each}
@@ -176,20 +216,28 @@
 	{:else if !pack}
 		<section class="mid" in:fade={{ duration: 150 }}>
 			<button class="pack" class:tearing={phase === 'tearing'} onclick={open} disabled={phase !== 'idle'}>
-				<span class="crimp top"></span>
+				<span class="crimp crimp-a"></span>
 				<span class="foil">
+					{#if packs.hero?.image}
+						<span class="art" style="background-image:url({packs.hero.image})"></span>
+					{/if}
+					<span class="tint"></span>
 					<span class="shine"></span>
-					{#if packs.logo}
-						<img class="plogo" src={packs.logo} alt={packs.setName} draggable="false" />
-					{:else}
-						<span class="plabel">{packs.setName}</span>
-					{/if}
-					{#if packs.symbol}
-						<img class="psym" src={packs.symbol} alt="" draggable="false" />
-					{/if}
-					<span class="pcount">{packs.size} cards</span>
+					<span class="face">
+						{#if packs.logo}
+							<img class="plogo" src={packs.logo} alt={packs.setName} draggable="false" />
+						{:else}
+							<span class="plabel">{packs.setName}</span>
+						{/if}
+					</span>
+					<span class="foot">
+						{#if packs.symbol}
+							<img class="psym" src={packs.symbol} alt="" draggable="false" />
+						{/if}
+						<span class="pcount">{packs.size} cards</span>
+					</span>
 				</span>
-				<span class="crimp bottom"></span>
+				<span class="crimp crimp-b"></span>
 			</button>
 			<p class="tap">{phase === 'tearing' ? 'Tearing...' : 'Click to open'}</p>
 			{#if packs.best}
@@ -203,36 +251,25 @@
 		<section class="table" in:fade={{ duration: 150 }}>
 			<div class="counter">{idx + 1} <i>/ {cards.length}</i></div>
 
-			<div class="hands">
-				<!-- cards are pulled out to the left, the way a right hander holds the
-				     pack still and works with the other hand -->
-				<div class="slot">
-					{#each remaining.slice(0, 3).reverse() as c, i (c.slot)}
-						{@const isTop = i === Math.min(remaining.length, 3) - 1}
-						<button
-							class="card"
-							class:top={isTop}
-							class:leaving={isTop && leaving}
-							class:hit={c.hit}
-							style="--c:{TIER_COLORS[c.tier]}; --d:{(Math.min(remaining.length, 3) - 1 - i)}; z-index:{i}"
-							onclick={() => isTop && next()}
-							disabled={!isTop}
-						>
-							<img src={c.image} alt={c.name} draggable="false" />
-							{#if c.hit}<span class="beam"></span>{/if}
-						</button>
-					{/each}
-				</div>
-
-				<div class="husk">
-					<span class="foil">
-						<span class="shine"></span>
-						{#if packs.logo}
-							<img class="plogo" src={packs.logo} alt="" draggable="false" />
-						{/if}
-					</span>
-					<span class="rip"></span>
-				</div>
+			<!-- the wrapper is gone by now; cards come out of where it was, so they
+			     arrive from the right and are drawn up and to the left -->
+			<div class="slot">
+				{#each remaining.slice(0, 3).reverse() as c, i (c.slot)}
+					{@const depth = Math.min(remaining.length, 3) - 1 - i}
+					{@const isTop = depth === 0}
+					<button
+						class="card"
+						class:top={isTop}
+						class:leaving={isTop && leaving}
+						class:hit={c.hit}
+						style="--c:{TIER_COLORS[c.tier]}; --d:{depth}; z-index:{i}"
+						onclick={() => isTop && next()}
+						disabled={!isTop}
+					>
+						<img src={c.image} alt={c.name} draggable="false" />
+						{#if c.hit}<span class="beam"></span>{/if}
+					</button>
+				{/each}
 			</div>
 
 			<p class="tap">
@@ -311,7 +348,7 @@
 		opacity: 0.5;
 	}
 
-	.top {
+	.pagehead {
 		max-width: 1100px;
 		margin: 0 auto 1.2rem;
 	}
@@ -427,26 +464,57 @@
 	}
 	.setgrid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-		gap: 0.55rem;
+		grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+		gap: 0.6rem;
 	}
 	.setbtn {
 		display: grid;
-		gap: 0.15rem;
-		text-align: left;
-		padding: 0.7rem 0.85rem;
-		border-radius: 12px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		background: rgba(255, 255, 255, 0.035);
+		gap: 0.2rem;
+		justify-items: center;
+		text-align: center;
+		padding: 0.7rem 0.7rem 0.75rem;
+		border-radius: 14px;
+		border: 1px solid color-mix(in srgb, var(--e) 26%, transparent);
+		background:
+			radial-gradient(120% 70% at 50% 0%, color-mix(in srgb, var(--e) 16%, transparent), transparent 70%),
+			rgba(255, 255, 255, 0.03);
 		color: inherit;
 		cursor: pointer;
+		transition:
+			border-color 0.18s,
+			transform 0.18s;
 	}
 	.setbtn:hover {
-		border-color: rgba(178, 152, 255, 0.6);
-		background: rgba(140, 110, 240, 0.12);
+		border-color: var(--e);
+		transform: translateY(-2px);
 	}
-	.setbtn span {
-		font-size: 0.72rem;
+	/* logos vary wildly in aspect, so a fixed box keeps the grid even */
+	.logowrap {
+		display: grid;
+		place-items: center;
+		width: 100%;
+		height: 52px;
+		margin-bottom: 0.15rem;
+	}
+	.logowrap img {
+		max-width: 100%;
+		max-height: 52px;
+		object-fit: contain;
+		filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+	}
+	.noLogo {
+		font-size: 0.9rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		color: var(--e);
+	}
+	.setbtn strong {
+		font-size: 0.85rem;
+		color: var(--e);
+		line-height: 1.25;
+	}
+	.setmeta {
+		font-size: 0.7rem;
 		color: #8f88b4;
 	}
 
@@ -520,33 +588,38 @@
 			linear-gradient(180deg, #6a5ac4, #3b2f78);
 		z-index: 2;
 	}
-	.crimp.top {
+	.crimp-a {
 		border-radius: 9px 9px 2px 2px;
 		box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.45);
 		transform-origin: left bottom;
 	}
-	.crimp.bottom {
+	.crimp-b {
 		border-radius: 2px 2px 9px 9px;
 		box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.45);
 	}
 	.foil {
 		position: relative;
 		display: grid;
-		align-content: center;
-		justify-items: center;
-		gap: 0.5rem;
+		grid-template-rows: 1fr auto;
 		overflow: hidden;
+		background: linear-gradient(165deg, #3b2a78, #241a4e 55%, #140d2c);
+	}
+	/* the chase card of the set stands in for the artwork a real wrapper carries;
+	   blown up and offset so only the illustration area shows, never the frame */
+	.art {
+		position: absolute;
+		inset: 0;
+		background-size: 210%;
+		background-position: 50% 20%;
+		background-repeat: no-repeat;
+		opacity: 0.92;
+	}
+	.tint {
+		position: absolute;
+		inset: 0;
 		background:
-			radial-gradient(70% 45% at 50% 8%, rgba(255, 210, 140, 0.3), transparent 62%),
-			conic-gradient(
-				from 210deg at 30% 20%,
-				#3a2a72,
-				#5b3fa8 18%,
-				#2a5ea8 38%,
-				#7a3f9c 58%,
-				#3a2a72 78%,
-				#5b3fa8
-			);
+			linear-gradient(180deg, rgba(10, 6, 26, 0.72), rgba(10, 6, 26, 0.12) 38%, rgba(8, 5, 22, 0.9)),
+			radial-gradient(70% 40% at 50% 12%, rgba(255, 214, 150, 0.28), transparent 65%);
 	}
 	.shine {
 		position: absolute;
@@ -560,35 +633,55 @@
 		animation: sweep 3.4s ease-in-out infinite;
 		pointer-events: none;
 	}
-	.plogo {
-		width: 74%;
-		max-height: 42%;
-		object-fit: contain;
-		filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.55));
+	.face {
+		position: relative;
+		display: grid;
+		place-items: center;
+		padding: 1rem 0.8rem 0;
 	}
-	.psym {
-		width: 1.5rem;
-		opacity: 0.8;
+	/* percentage max-height against an auto sized row collapses the logo to a
+	   sliver, which is what made it tiny; a fixed cap does not have that problem */
+	.plogo {
+		width: 86%;
+		max-height: 120px;
+		object-fit: contain;
+		filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.7));
 	}
 	.plabel {
-		font-size: 1.05rem;
+		font-size: 1.15rem;
 		font-weight: 700;
-		padding: 0 1rem;
+		text-align: center;
+		text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
 		color: #fff;
 	}
+	.foot {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		padding: 0 0 0.9rem;
+	}
+	.psym {
+		width: 1.15rem;
+		opacity: 0.85;
+	}
 	.pcount {
-		font-size: 0.76rem;
-		letter-spacing: 0.1em;
+		font-size: 0.72rem;
+		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: #cfc4f0;
+		color: #d8cff5;
+		text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
 	}
 
-	/* the rip: the crimp peels up and away, the body drops a touch and fades */
-	.pack.tearing .crimp.top {
-		animation: rip 0.62s cubic-bezier(0.3, 0.1, 0.2, 1) forwards;
+	/* the rip, then the wrapper itself is tossed to the right and gone, so the
+	   cards are never sharing the screen with an empty husk */
+	.pack.tearing .crimp-a {
+		animation: rip 0.44s cubic-bezier(0.3, 0.1, 0.2, 1) forwards;
 	}
-	.pack.tearing .foil {
-		animation: settle 0.62s ease forwards;
+	.pack.tearing .foil,
+	.pack.tearing .crimp-b {
+		animation: toss 0.46s cubic-bezier(0.4, 0, 0.7, 1) 0.3s forwards;
 	}
 	.pack.tearing {
 		pointer-events: none;
@@ -618,53 +711,10 @@
 		color: #7d769f;
 	}
 
-	/* pack parked on the right, cards drawn out to the left */
-	.hands {
-		position: relative;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: clamp(0.5rem, 4vw, 3rem);
-	}
 	.slot {
 		position: relative;
-		width: min(290px, 70vw);
+		width: min(300px, 76vw);
 		aspect-ratio: 63 / 88;
-	}
-	.husk {
-		position: relative;
-		width: min(150px, 26vw);
-		aspect-ratio: 63 / 96;
-		opacity: 0.5;
-		transform: rotate(4deg);
-	}
-	.husk .foil {
-		position: absolute;
-		inset: 0;
-		border-radius: 4px 4px 9px 9px;
-	}
-	.husk .plogo {
-		width: 78%;
-		opacity: 0.65;
-	}
-	/* torn edge along the top of the empty wrapper */
-	.rip {
-		position: absolute;
-		left: 0;
-		right: 0;
-		top: -2px;
-		height: 8px;
-		background: repeating-linear-gradient(
-			98deg,
-			#0b0818 0 5px,
-			transparent 5px 9px,
-			#0b0818 9px 12px
-		);
-	}
-	@media (max-width: 620px) {
-		.husk {
-			display: none;
-		}
 	}
 
 	.card {
@@ -881,16 +931,14 @@
 			opacity: 0;
 		}
 	}
-	@keyframes settle {
+	@keyframes toss {
 		0% {
-			transform: translateY(0);
-		}
-		35% {
-			transform: translateY(-3px);
+			transform: translate(0, 0) rotate(0);
+			opacity: 1;
 		}
 		100% {
-			transform: translateY(9px);
-			opacity: 0.25;
+			transform: translate(150%, 18%) rotate(16deg);
+			opacity: 0;
 		}
 	}
 	@keyframes pulse {

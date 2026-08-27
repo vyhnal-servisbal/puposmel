@@ -50,6 +50,15 @@ class PackStore {
 	godCount = $state(0);
 	best = $state<PoolCard | null>(null);
 
+	// Real wrappers put a Pokemon from the set on the front, so the chase card of
+	// the set stands in for that artwork.
+	get hero(): PoolCard | null {
+		if (!this.pool.length) return null;
+		let best = this.pool[0];
+		for (const c of this.pool) if (c.tier > best.tier) best = c;
+		return best;
+	}
+
 	get size(): number {
 		return configFor(this.model).size;
 	}

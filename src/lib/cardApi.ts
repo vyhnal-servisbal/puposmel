@@ -18,6 +18,8 @@ export interface CardSet {
 	id: string;
 	name: string;
 	total?: number; // cards in the set, used by the pack picker to flag tiny pools
+	logo?: string; // webp, roughly a quarter the size of the png
+	series?: string; // era id, taken from the logo path; drives the picker colours
 }
 
 // setId -> set name, filled once from /sets. The list is needed for the filter
@@ -33,10 +35,17 @@ export async function listSets(): Promise<CardSet[]> {
 		setsPromise = (async () => {
 			const res = await fetch(`${API}/sets`);
 			if (!res.ok) return [];
-			const data: { id: string; name: string; cardCount?: { total?: number } }[] =
+			const data: { id: string; name: string; logo?: string; cardCount?: { total?: number } }[] =
 				await res.json();
 			const list = data
-				.map((s) => ({ id: s.id, name: s.name, total: s.cardCount?.total ?? 0 }))
+				.map((s) => ({
+					id: s.id,
+					name: s.name,
+					total: s.cardCount?.total ?? 0,
+					logo: s.logo ? `${s.logo}.webp` : undefined,
+					// .../en/<series>/<setId>/logo
+					series: s.logo ? s.logo.split('/').slice(-3, -2)[0] : undefined
+				}))
 				.reverse();
 			setNames = {};
 			for (const s of list) setNames[s.id] = s.name;
