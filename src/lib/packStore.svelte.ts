@@ -6,7 +6,7 @@ const LS_INDEX = 'packpool:index';
 const KEEP = 6; // how many set pools stay cached
 const CONC = 14;
 
-type CachedPool = { at: number; model: ModelKey; cards: PoolCard[] };
+type CachedPool = { at: number; model: ModelKey; cards: PoolCard[]; logo?: string; symbol?: string };
 
 // A set is 100-300 cards and each one needs its own request for the rarity, so
 // this is the slow part: about a second and a half on a good line. It only ever
@@ -35,6 +35,8 @@ function writeCache(setId: string, data: CachedPool) {
 class PackStore {
 	setId = $state('');
 	setName = $state('');
+	logo = $state('');
+	symbol = $state('');
 	model = $state<ModelKey>('modern');
 	pool = $state<PoolCard[]>([]);
 
@@ -66,6 +68,8 @@ class PackStore {
 		if (cached?.cards?.length) {
 			this.model = cached.model;
 			this.pool = cached.cards;
+			this.logo = cached.logo ?? '';
+			this.symbol = cached.symbol ?? '';
 			return;
 		}
 
@@ -78,6 +82,9 @@ class PackStore {
 			const set = await head.json();
 			const model = modelFor(setId, set.releaseDate);
 			this.model = model;
+			// webp is three to five times smaller than the png for the same logo
+			this.logo = set.logo ? `${set.logo}.webp` : '';
+			this.symbol = set.symbol ? `${set.symbol}.webp` : '';
 
 			const ids: string[] = (set.cards ?? []).filter((c: { image?: string }) => c.image).map((c: { id: string }) => c.id);
 			this.total = ids.length;
@@ -122,7 +129,7 @@ class PackStore {
 			if (!out.length) throw new Error('no cards with images');
 			out.sort((a, b) => (a.number ?? '').localeCompare(b.number ?? '', undefined, { numeric: true }));
 			this.pool = out;
-			writeCache(setId, { at: Date.now(), model, cards: out });
+			writeCache(setId, { at: Date.now(), model, cards: out, logo: this.logo, symbol: this.symbol });
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : 'failed';
 			this.pool = [];

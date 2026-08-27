@@ -42,13 +42,31 @@
 		packs.load(s.id, s.name);
 	}
 
+	// idle -> tearing (the crimp rips off) -> revealing (cards come out)
+	let phase = $state<'idle' | 'tearing' | 'revealing'>('idle');
+	const TEAR_MS = 620;
+
 	function open() {
-		packs.open();
-		idx = 0;
-		leaving = false;
-		const best = Math.max(0, ...(packs.pack?.cards ?? []).map((c) => c.tier));
-		if (packs.pack?.god) flashNow(6);
-		else if (mode === 'instant' && best >= 4) flashNow(best);
+		if (phase !== 'idle') return;
+		phase = 'tearing';
+		setTimeout(() => {
+			packs.open();
+			idx = 0;
+			leaving = false;
+			phase = 'revealing';
+			const best = Math.max(0, ...(packs.pack?.cards ?? []).map((c) => c.tier));
+			if (packs.pack?.god) flashNow(6);
+			else if (mode === 'instant' && best >= 4) flashNow(best);
+			else if (mode === 'stack') {
+				const first = packs.pack?.cards[0];
+				if (first && first.tier >= 4) flashNow(first.tier);
+			}
+		}, TEAR_MS);
+	}
+
+	function again() {
+		packs.clear();
+		phase = 'idle';
 	}
 
 	function flashNow(t: number) {
@@ -157,12 +175,23 @@
 		<section class="mid"><p class="err">Could not load that set: {packs.error}</p></section>
 	{:else if !pack}
 		<section class="mid" in:fade={{ duration: 150 }}>
-			<button class="packart" onclick={open}>
-				<span class="shine"></span>
-				<span class="plabel">{packs.setName}</span>
-				<span class="pcount">{packs.size} cards</span>
-				<span class="popen">Open pack</span>
+			<button class="pack" class:tearing={phase === 'tearing'} onclick={open} disabled={phase !== 'idle'}>
+				<span class="crimp top"></span>
+				<span class="foil">
+					<span class="shine"></span>
+					{#if packs.logo}
+						<img class="plogo" src={packs.logo} alt={packs.setName} draggable="false" />
+					{:else}
+						<span class="plabel">{packs.setName}</span>
+					{/if}
+					{#if packs.symbol}
+						<img class="psym" src={packs.symbol} alt="" draggable="false" />
+					{/if}
+					<span class="pcount">{packs.size} cards</span>
+				</span>
+				<span class="crimp bottom"></span>
 			</button>
+			<p class="tap">{phase === 'tearing' ? 'Tearing...' : 'Click to open'}</p>
 			{#if packs.best}
 				<p class="bestline">
 					Best so far: <b style="color:{TIER_COLORS[packs.best.tier]}">{packs.best.name}</b>
@@ -171,27 +200,45 @@
 			{/if}
 		</section>
 	{:else if mode === 'stack' && !finished}
-		<section class="mid stackwrap" in:fade={{ duration: 150 }}>
+		<section class="table" in:fade={{ duration: 150 }}>
 			<div class="counter">{idx + 1} <i>/ {cards.length}</i></div>
-			<div class="stack">
-				{#each remaining.slice(0, 4).reverse() as c, i (c.slot)}
-					{@const isTop = i === Math.min(remaining.length, 4) - 1}
-					<button
-						class="card"
-						class:top={isTop}
-						class:leaving={isTop && leaving}
-						class:hit={c.hit}
-						style="--c:{TIER_COLORS[c.tier]}; --d:{(Math.min(remaining.length, 4) - 1 - i) * 6}px; z-index:{i}"
-						onclick={() => isTop && next()}
-						disabled={!isTop}
-					>
-						<img src={c.image} alt={c.name} draggable="false" />
-						{#if c.hit}<span class="beam"></span>{/if}
-						{#if c.asReverse}<span class="rev">reverse</span>{/if}
-					</button>
-				{/each}
+
+			<div class="hands">
+				<!-- cards are pulled out to the left, the way a right hander holds the
+				     pack still and works with the other hand -->
+				<div class="slot">
+					{#each remaining.slice(0, 3).reverse() as c, i (c.slot)}
+						{@const isTop = i === Math.min(remaining.length, 3) - 1}
+						<button
+							class="card"
+							class:top={isTop}
+							class:leaving={isTop && leaving}
+							class:hit={c.hit}
+							style="--c:{TIER_COLORS[c.tier]}; --d:{(Math.min(remaining.length, 3) - 1 - i)}; z-index:{i}"
+							onclick={() => isTop && next()}
+							disabled={!isTop}
+						>
+							<img src={c.image} alt={c.name} draggable="false" />
+							{#if c.hit}<span class="beam"></span>{/if}
+						</button>
+					{/each}
+				</div>
+
+				<div class="husk">
+					<span class="foil">
+						<span class="shine"></span>
+						{#if packs.logo}
+							<img class="plogo" src={packs.logo} alt="" draggable="false" />
+						{/if}
+					</span>
+					<span class="rip"></span>
+				</div>
 			</div>
-			<p class="tap">Click the card, or press Space</p>
+
+			<p class="tap">
+				{#if remaining[0]?.asReverse}<b class="revtag">reverse holo</b> ·{/if}
+				Click the card, or press Space
+			</p>
 		</section>
 	{:else}
 		<section class="summary" in:fade={{ duration: 180 }}>
@@ -217,7 +264,7 @@
 				{/each}
 			</div>
 			<div class="again">
-				<button class="btn primary" onclick={open}>Open another</button>
+				<button class="btn primary" onclick={again}>Open another</button>
 				<span class="tally">
 					{cards.filter((c) => c.hit).length} hit{cards.filter((c) => c.hit).length === 1 ? '' : 's'}
 					· best {tierLabel(Math.max(...cards.map((c) => c.tier)))}
@@ -446,48 +493,105 @@
 		color: #ff9a8a;
 	}
 
-	.packart {
+	/* foil wrapper: crimped strip, body, crimped strip. The top one is what tears. */
+	.pack {
 		position: relative;
-		width: min(280px, 74vw);
-		aspect-ratio: 63 / 88;
-		border-radius: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		background:
-			radial-gradient(80% 50% at 50% 0%, rgba(255, 190, 110, 0.28), transparent 60%),
-			linear-gradient(160deg, #2a1c4d, #140d2a 60%, #0a0618);
-		color: #fff;
+		width: min(268px, 72vw);
+		padding: 0;
+		border: 0;
+		background: transparent;
 		cursor: pointer;
 		display: grid;
-		align-content: center;
-		gap: 0.4rem;
-		overflow: hidden;
-		box-shadow: 0 22px 50px rgba(0, 0, 0, 0.5);
+		grid-template-rows: 26px 1fr 18px;
+		aspect-ratio: 63 / 96;
+		filter: drop-shadow(0 22px 46px rgba(0, 0, 0, 0.55));
 		transition: transform 0.18s;
 	}
-	.packart:hover {
-		transform: translateY(-4px) scale(1.02);
+	.pack:hover:not(:disabled) {
+		transform: translateY(-5px) scale(1.02);
+	}
+	.pack:disabled {
+		cursor: default;
+	}
+	.crimp {
+		position: relative;
+		background:
+			repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.35) 0 3px, transparent 3px 7px),
+			linear-gradient(180deg, #6a5ac4, #3b2f78);
+		z-index: 2;
+	}
+	.crimp.top {
+		border-radius: 9px 9px 2px 2px;
+		box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.45);
+		transform-origin: left bottom;
+	}
+	.crimp.bottom {
+		border-radius: 2px 2px 9px 9px;
+		box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.45);
+	}
+	.foil {
+		position: relative;
+		display: grid;
+		align-content: center;
+		justify-items: center;
+		gap: 0.5rem;
+		overflow: hidden;
+		background:
+			radial-gradient(70% 45% at 50% 8%, rgba(255, 210, 140, 0.3), transparent 62%),
+			conic-gradient(
+				from 210deg at 30% 20%,
+				#3a2a72,
+				#5b3fa8 18%,
+				#2a5ea8 38%,
+				#7a3f9c 58%,
+				#3a2a72 78%,
+				#5b3fa8
+			);
 	}
 	.shine {
 		position: absolute;
 		inset: -40% -120%;
-		background: linear-gradient(70deg, transparent 42%, rgba(255, 255, 255, 0.22) 50%, transparent 58%);
+		background: linear-gradient(
+			70deg,
+			transparent 42%,
+			rgba(255, 255, 255, 0.28) 50%,
+			transparent 58%
+		);
 		animation: sweep 3.4s ease-in-out infinite;
+		pointer-events: none;
+	}
+	.plogo {
+		width: 74%;
+		max-height: 42%;
+		object-fit: contain;
+		filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.55));
+	}
+	.psym {
+		width: 1.5rem;
+		opacity: 0.8;
 	}
 	.plabel {
-		font-size: 1.1rem;
+		font-size: 1.05rem;
 		font-weight: 700;
 		padding: 0 1rem;
+		color: #fff;
 	}
 	.pcount {
-		font-size: 0.8rem;
-		color: #bdb4e0;
-	}
-	.popen {
-		margin-top: 0.6rem;
-		font-size: 0.82rem;
-		letter-spacing: 0.14em;
+		font-size: 0.76rem;
+		letter-spacing: 0.1em;
 		text-transform: uppercase;
-		color: #ffc98a;
+		color: #cfc4f0;
+	}
+
+	/* the rip: the crimp peels up and away, the body drops a touch and fades */
+	.pack.tearing .crimp.top {
+		animation: rip 0.62s cubic-bezier(0.3, 0.1, 0.2, 1) forwards;
+	}
+	.pack.tearing .foil {
+		animation: settle 0.62s ease forwards;
+	}
+	.pack.tearing {
+		pointer-events: none;
 	}
 	.bestline {
 		margin: 0;
@@ -495,8 +599,12 @@
 		color: #9a93bd;
 	}
 
-	.stackwrap {
-		gap: 0.6rem;
+	.table {
+		max-width: 1100px;
+		margin: 1.4rem auto 0;
+		display: grid;
+		justify-items: center;
+		gap: 0.7rem;
 	}
 	.counter {
 		font-size: 1.3rem;
@@ -509,11 +617,56 @@
 		font-size: 0.8rem;
 		color: #7d769f;
 	}
-	.stack {
+
+	/* pack parked on the right, cards drawn out to the left */
+	.hands {
 		position: relative;
-		width: min(300px, 78vw);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: clamp(0.5rem, 4vw, 3rem);
+	}
+	.slot {
+		position: relative;
+		width: min(290px, 70vw);
 		aspect-ratio: 63 / 88;
 	}
+	.husk {
+		position: relative;
+		width: min(150px, 26vw);
+		aspect-ratio: 63 / 96;
+		opacity: 0.5;
+		transform: rotate(4deg);
+	}
+	.husk .foil {
+		position: absolute;
+		inset: 0;
+		border-radius: 4px 4px 9px 9px;
+	}
+	.husk .plogo {
+		width: 78%;
+		opacity: 0.65;
+	}
+	/* torn edge along the top of the empty wrapper */
+	.rip {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: -2px;
+		height: 8px;
+		background: repeating-linear-gradient(
+			98deg,
+			#0b0818 0 5px,
+			transparent 5px 9px,
+			#0b0818 9px 12px
+		);
+	}
+	@media (max-width: 620px) {
+		.husk {
+			display: none;
+		}
+	}
+
 	.card {
 		position: absolute;
 		inset: 0;
@@ -522,7 +675,8 @@
 		border-radius: 14px;
 		background: transparent;
 		overflow: visible;
-		transform: translateY(var(--d)) scale(calc(1 - var(--d) / 900));
+		transform: translate(calc(var(--d) * 9px), calc(var(--d) * 5px))
+			scale(calc(1 - var(--d) * 0.04));
 		transition:
 			transform 0.26s ease,
 			opacity 0.26s ease;
@@ -534,18 +688,23 @@
 		border-radius: 12px;
 		display: block;
 	}
+	/* slides out of the pack, so it arrives from the right and travels up-left */
 	.card.top {
 		cursor: pointer;
-		animation: dealin 0.28s ease both;
+		animation: draw 0.36s cubic-bezier(0.18, 0.7, 0.24, 1) both;
 	}
 	.card.leaving {
-		transform: translate(120%, -14%) rotate(14deg);
+		transform: translate(-62%, -34%) rotate(-11deg) scale(0.94);
 		opacity: 0;
 	}
 	.card.hit img {
 		box-shadow:
 			0 0 0 2px var(--c),
 			0 0 34px var(--c);
+	}
+	.revtag {
+		color: #9ecbff;
+		font-weight: 600;
 	}
 	.beam {
 		position: absolute;
@@ -555,16 +714,6 @@
 		opacity: 0.35;
 		pointer-events: none;
 		animation: pulse 1.6s ease-in-out infinite;
-	}
-	.rev {
-		position: absolute;
-		left: 50%;
-		bottom: -1.5rem;
-		transform: translateX(-50%);
-		font-size: 0.7rem;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: #8f88b4;
 	}
 	.tap {
 		margin: 0.8rem 0 0;
@@ -705,14 +854,43 @@
 			transform: translateX(40%);
 		}
 	}
-	@keyframes dealin {
+	@keyframes draw {
 		from {
-			transform: translateY(26px) scale(0.94);
+			transform: translate(58%, 26%) rotate(7deg) scale(0.88);
 			opacity: 0;
 		}
-		to {
-			transform: translateY(0) scale(1);
+		60% {
 			opacity: 1;
+		}
+		to {
+			transform: translate(0, 0) rotate(0) scale(1);
+			opacity: 1;
+		}
+	}
+	@keyframes rip {
+		0% {
+			transform: translate(0, 0) rotate(0);
+			opacity: 1;
+		}
+		35% {
+			transform: translate(4%, -14%) rotate(-7deg);
+			opacity: 1;
+		}
+		100% {
+			transform: translate(70%, -150%) rotate(38deg);
+			opacity: 0;
+		}
+	}
+	@keyframes settle {
+		0% {
+			transform: translateY(0);
+		}
+		35% {
+			transform: translateY(-3px);
+		}
+		100% {
+			transform: translateY(9px);
+			opacity: 0.25;
 		}
 	}
 	@keyframes pulse {
