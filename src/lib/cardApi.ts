@@ -17,6 +17,7 @@ interface Full extends Brief {
 export interface CardSet {
 	id: string;
 	name: string;
+	total?: number; // cards in the set, used by the pack picker to flag tiny pools
 }
 
 // setId -> set name, filled once from /sets. The list is needed for the filter
@@ -32,8 +33,11 @@ export async function listSets(): Promise<CardSet[]> {
 		setsPromise = (async () => {
 			const res = await fetch(`${API}/sets`);
 			if (!res.ok) return [];
-			const data: { id: string; name: string }[] = await res.json();
-			const list = data.map((s) => ({ id: s.id, name: s.name })).reverse();
+			const data: { id: string; name: string; cardCount?: { total?: number } }[] =
+				await res.json();
+			const list = data
+				.map((s) => ({ id: s.id, name: s.name, total: s.cardCount?.total ?? 0 }))
+				.reverse();
 			setNames = {};
 			for (const s of list) setNames[s.id] = s.name;
 			setsCache = list;

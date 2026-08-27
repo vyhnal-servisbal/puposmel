@@ -30,6 +30,7 @@
 	const GAMES: { icon: string; label: string; href?: string; act?: () => void }[] = [
 		{ icon: '❓', label: "Who's that Pokémon", act: () => fun.openQuiz(buddies.all) },
 		{ icon: '🎁', label: 'Unboxing', href: '/game' },
+		{ icon: '📦', label: 'Pack opening', href: '/packs' },
 		{ icon: '⚔️', label: 'Pack battle', href: '/battle' },
 		{ icon: '🃏', label: 'Pexeso', href: '/pexeso' },
 		{ icon: '🎰', label: 'Slots', href: '/slots' }
