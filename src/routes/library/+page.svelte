@@ -19,9 +19,11 @@
 	let picked = $state<LibRow | null>(null);
 
 	onMount(() => {
-		cloud.init();
-		library.load();
-		library.watch();
+		// init first: load() filters by profile name and it is empty until then
+		cloud.init().then(() => {
+			library.load();
+			library.watch();
+		});
 		return () => library.unwatch();
 	});
 
@@ -118,6 +120,10 @@
 				<div class="stat god"><b>{library.totalGods}</b><span>god packs</span></div>
 			{/if}
 		</div>
+
+		{#if library.writeError}
+			<p class="err small">{library.writeError}</p>
+		{/if}
 
 		{#if library.bestEver?.best_card}
 			{@const b = library.bestEver}
@@ -219,6 +225,14 @@
 						</span>
 						<strong>{s.name}</strong>
 						<span class="smeta">{s.count} cards{meta ? ` · ${meta.packs} packs` : ''}</span>
+						{#if meta?.best_card}
+							<span class="sbest" style="--c:{TIER_COLORS[meta.best_tier] ?? '#8a83ad'}">
+								{#if meta.best_card.image}
+									<img src={meta.best_card.image} alt="" loading="lazy" />
+								{/if}
+								<i>{meta.best_card.name}</i>
+							</span>
+						{/if}
 					</button>
 				{/each}
 			</div>
@@ -537,6 +551,34 @@
 	.smeta {
 		font-size: 0.71rem;
 		color: #8f88b4;
+	}
+	.sbest {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin-top: 0.35rem;
+		padding: 0.2rem 0.55rem 0.2rem 0.2rem;
+		border-radius: 999px;
+		border: 1px solid color-mix(in srgb, var(--c) 50%, transparent);
+		max-width: 100%;
+	}
+	.sbest img {
+		width: 20px;
+		border-radius: 3px;
+		flex: none;
+	}
+	.sbest i {
+		font-style: normal;
+		font-size: 0.68rem;
+		color: var(--c);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.err.small {
+		margin: 0.6rem 0 0;
+		font-size: 0.78rem;
+		text-align: left;
 	}
 
 	.packlist {

@@ -39,6 +39,9 @@ export interface OpenRow {
 class LibraryStore {
 	rows = $state<LibRow[]>([]);
 	opens = $state<OpenRow[]>([]);
+	// supabase.rpc resolves with { error } instead of throwing, so a broken write
+	// used to vanish into a catch that never fired. Keep the last one visible.
+	writeError = $state('');
 	loading = $state(false);
 	error = $state('');
 	enabled = hasSupabase;
@@ -111,7 +114,8 @@ class LibraryStore {
 				.select('*')
 				.eq('profile_name', profile)
 				.order('packs', { ascending: false });
-			if (!opens.error) this.opens = (opens.data ?? []) as OpenRow[];
+			if (opens.error) this.writeError = 'pack stats: ' + opens.error.message;
+			else this.opens = (opens.data ?? []) as OpenRow[];
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : 'failed';
 		} finally {
@@ -157,8 +161,8 @@ class LibraryStore {
 		let best = cards[0];
 		for (const c of cards) if (c.tier > best.tier) best = c;
 		const value = cards.reduce((n, c) => n + (c.price ?? 0), 0);
-		try {
-			await supabase.rpc('record_open', {
+		{
+			const { error } = await supabase.rpc('record_open', {
 				p_profile: cloud.profileName || 'Unknown',
 				p_set_id: setId,
 				p_set_name: setName,
@@ -174,8 +178,7 @@ class LibraryStore {
 				},
 				p_value: Number(value.toFixed(2))
 			});
-		} catch {
-			/* stats are not worth breaking an opening over */
+			if (error) this.writeError = 'pack stats: ' + error.message;
 		}
 	}
 
@@ -184,8 +187,8 @@ class LibraryStore {
 		if (!this.enabled || !cards.length) return;
 		const profile = cloud.profileName || 'Unknown';
 		for (const c of cards) {
-			try {
-				await supabase.rpc('record_pull', {
+			{
+				const { error } = await supabase.rpc('record_pull', {
 					p_profile: profile,
 					p_card_id: c.id,
 					p_reverse: !!c.asReverse,
@@ -202,8 +205,10 @@ class LibraryStore {
 					p_rarity: c.rarity,
 					p_tier: c.tier
 				});
-			} catch {
-				/* the pack matters more than the bookkeeping */
+				if (error) {
+					this.writeError = 'library: ' + error.message;
+					break; // one bad row means the rest will fail the same way
+				}
 			}
 		}
 	}

@@ -7,6 +7,7 @@
 	import Card from '$lib/components/Card.svelte';
 	import { loadLook, eraColor, NO_ART, type Look } from '$lib/setLook';
 	import { library } from '$lib/libraryStore.svelte';
+	import { cloud } from '$lib/cloud.svelte';
 
 	let sets = $state<CardSet[]>([]);
 	let query = $state('');
@@ -17,6 +18,9 @@
 	let flash = $state<number>(-1);
 
 	onMount(async () => {
+		// without this the profile name is still empty here, so pulls were filed
+		// under "Unknown" while the library read them under the real name
+		await cloud.init();
 		sets = await listSets();
 		const saved = localStorage.getItem('packmode');
 		if (saved === 'instant' || saved === 'stack') mode = saved;
@@ -186,15 +190,13 @@
 
 		<div class="bar">
 			<div class="modes">
-				<button class:on={mode === 'stack'} onclick={() => (mode = 'stack')}>🂠 One by one</button>
-				<button class:on={mode === 'instant'} onclick={() => (mode = 'instant')}>⚡ All at once</button>
+				<button class:on={mode === 'stack'} onclick={() => (mode = 'stack')}>
+					<span>🂠</span> One by one
+				</button>
+				<button class:on={mode === 'instant'} onclick={() => (mode = 'instant')}>
+					<span>⚡</span> All at once
+				</button>
 			</div>
-			{#if packs.setId}
-				<span class="chip">{packs.setName}</span>
-				<span class="chip">{packs.model} · {packs.size} cards</span>
-				<span class="chip">{packs.opened} opened</span>
-				{#if packs.godCount}<span class="chip god">{packs.godCount} god</span>{/if}
-			{/if}
 		</div>
 	</header>
 
@@ -253,6 +255,15 @@
 		<section class="mid"><p class="err">Could not load that set: {packs.error}</p></section>
 	{:else if !pack}
 		<section class="mid" in:fade={{ duration: 150 }}>
+			<div class="setline" style={wrapStyle}>
+				<strong>{packs.setName}</strong>
+				<span>{packs.model} · {packs.size} cards</span>
+			</div>
+			<div class="opened">
+				<b>{packs.opened}</b>
+				<i>opened</i>
+				{#if packs.godCount}<em>{packs.godCount} god</em>{/if}
+			</div>
 			<button
 				class="pack"
 				class:tearing={phase === 'tearing'}
@@ -400,15 +411,34 @@
 </div>
 
 <style>
+	/* soft aurora over a very dark base, plus a faint grid so the empty middle of
+	   the page does not read as a flat black rectangle */
 	.wrap {
 		position: relative;
 		min-height: 100dvh;
 		padding: 1rem clamp(0.7rem, 3vw, 2rem) 3rem;
 		color: #ddd8f2;
 		background:
-			radial-gradient(circle at 20% 0%, rgba(120, 80, 220, 0.18), transparent 45%),
-			radial-gradient(circle at 85% 20%, rgba(40, 130, 200, 0.14), transparent 45%),
-			linear-gradient(180deg, #08060f, #0b0818 55%, #06040d);
+			radial-gradient(58% 42% at 14% -6%, rgba(150, 96, 255, 0.26), transparent 68%),
+			radial-gradient(52% 38% at 88% 6%, rgba(56, 150, 232, 0.2), transparent 70%),
+			radial-gradient(46% 34% at 74% 96%, rgba(226, 88, 168, 0.16), transparent 72%),
+			linear-gradient(180deg, #0a0716, #0c0819 46%, #060410);
+	}
+	.wrap::before {
+		content: '';
+		position: fixed;
+		inset: 0;
+		z-index: 0;
+		pointer-events: none;
+		background-image:
+			linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+			linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+		background-size: 46px 46px;
+		mask-image: radial-gradient(circle at 50% 30%, #000 10%, transparent 72%);
+	}
+	.wrap > * {
+		position: relative;
+		z-index: 1;
 	}
 
 	.flash {
@@ -471,30 +501,39 @@
 		gap: 0.3rem;
 		margin-right: 0.4rem;
 	}
-	.modes button {
-		padding: 0.42rem 0.8rem;
+	/* one pill, two halves, so it reads as a switch rather than two loose buttons */
+	.modes {
+		padding: 3px;
 		border-radius: 999px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		border: 1px solid rgba(255, 255, 255, 0.1);
 		background: rgba(255, 255, 255, 0.04);
-		color: #cfc9ea;
+		gap: 2px;
+	}
+	.modes button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.44rem 0.95rem;
+		border-radius: 999px;
+		border: 0;
+		background: transparent;
+		color: #9a93bd;
 		cursor: pointer;
-		font-size: 0.83rem;
+		font-size: 0.84rem;
+		transition:
+			background 0.18s,
+			color 0.18s;
+	}
+	.modes button span {
+		font-size: 0.95rem;
+	}
+	.modes button:hover {
+		color: #d8d2f0;
 	}
 	.modes button.on {
-		border-color: rgba(255, 175, 95, 0.75);
-		background: rgba(255, 150, 60, 0.16);
+		background: linear-gradient(180deg, rgba(255, 170, 80, 0.3), rgba(255, 120, 40, 0.14));
 		color: #ffd6a8;
-	}
-	.chip {
-		padding: 0.24rem 0.6rem;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.06);
-		font-size: 0.78rem;
-		color: #b3abd6;
-	}
-	.chip.god {
-		background: rgba(255, 224, 102, 0.16);
-		color: #ffe066;
+		box-shadow: inset 0 0 0 1px rgba(255, 175, 95, 0.55);
 	}
 
 	.picker {
@@ -597,10 +636,59 @@
 
 	.mid {
 		max-width: 1100px;
-		margin: 2rem auto 0;
+		margin: 1.6rem auto 0;
 		display: grid;
 		place-items: center;
-		gap: 1rem;
+		gap: 0.7rem;
+	}
+	.setline {
+		display: grid;
+		justify-items: center;
+		gap: 0.1rem;
+		text-align: center;
+	}
+	.setline strong {
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+		color: var(--ink, #e6dffb);
+	}
+	.setline span {
+		font-size: 0.74rem;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: #8f88b4;
+	}
+	/* the counter sits directly over the pack, which is where the eye already is */
+	.opened {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		padding: 0.3rem 0.9rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.04);
+	}
+	.opened b {
+		font-size: 1.05rem;
+		font-variant-numeric: tabular-nums;
+		color: #ffc180;
+	}
+	.opened i {
+		font-style: normal;
+		font-size: 0.7rem;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: #8f88b4;
+	}
+	.opened em {
+		font-style: normal;
+		margin-left: 0.35rem;
+		padding: 0.1rem 0.5rem;
+		border-radius: 999px;
+		background: rgba(255, 224, 102, 0.16);
+		color: #ffe066;
+		font-size: 0.72rem;
 	}
 	.loader {
 		display: grid;
