@@ -57,6 +57,11 @@ class LibraryStore {
 	get totalValue(): number {
 		return this.rows.reduce((n, r) => n + (r.price ?? 0) * r.copies, 0);
 	}
+	// tier 3 and up is what the pack engine calls a hit, so the library counts them
+	// the same way instead of storing a second flag
+	get totalHits(): number {
+		return this.rows.reduce((n, r) => n + (r.tier >= 3 ? r.copies : 0), 0);
+	}
 	get sets(): { id: string; name: string; count: number; series: string }[] {
 		const by = new Map<string, { id: string; name: string; count: number; series: string }>();
 		for (const r of this.rows) {
@@ -149,46 +154,68 @@ class LibraryStore {
 		}
 	}
 
-	// One row per set: how many packs went through it and the best thing it gave up.
-	async recordOpen(
-		setId: string,
-		setName: string,
-		logo: string,
-		cards: PackCard[],
-		god: boolean
-	) {
-		if (!this.enabled || !cards.length) return;
-		let best = cards[0];
-		for (const c of cards) if (c.tier > best.tier) best = c;
-		const value = cards.reduce((n, c) => n + (c.price ?? 0), 0);
-		{
-			const { error } = await supabase.rpc('record_open', {
-				p_profile: cloud.profileName || 'Unknown',
-				p_set_id: setId,
-				p_set_name: setName,
-				p_logo: logo || null,
-				p_cards: cards.length,
-				p_god: god,
-				p_best_tier: best.tier,
-				p_best_card: {
-					name: best.name,
-					image: best.image,
-					rarity: best.asReverse ? 'Reverse holo' : best.rarity,
-					price: best.price ?? null
-				},
-				p_value: Number(value.toFixed(2))
-			});
-			if (error) this.writeError = 'pack stats: ' + error.message;
+	// Every write goes down a single chain. Packs opened back to back used to leave
+	// two packs' worth of upserts racing, and two concurrent "on conflict do update"
+	// hits on the same card row come back as a unique violation, which is how the
+	// odd card went missing.
+	private tail: Promise<unknown> = Promise.resolve();
+
+	private queue<T>(job: () => Promise<T>): Promise<T> {
+		const next = this.tail.then(job, job);
+		this.tail = next.catch(() => {});
+		return next;
+	}
+
+	// A dropped write is a card you never get back, so give it three goes before
+	// admitting defeat. Returns the error message, or an empty string.
+	private async call(fn: string, params: Record<string, unknown>): Promise<string> {
+		for (let attempt = 0; ; attempt++) {
+			const { error } = await supabase.rpc(fn, params);
+			if (!error) return '';
+			if (attempt >= 2) return error.message;
+			await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
 		}
 	}
 
-	// Fire and forget: a failed write must never interrupt a pack being opened.
-	async record(cards: PackCard[]) {
-		if (!this.enabled || !cards.length) return;
+	// One row per set: how many packs went through it and the best thing it gave up.
+	recordOpen(setId: string, setName: string, logo: string, cards: PackCard[], god: boolean) {
+		if (!this.enabled || !cards.length) return Promise.resolve();
+		let best = cards[0];
+		for (const c of cards) if (c.tier > best.tier) best = c;
+		const value = cards.reduce((n, c) => n + (c.price ?? 0), 0);
+		const params = {
+			p_profile: cloud.profileName || 'Unknown',
+			p_set_id: setId,
+			p_set_name: setName,
+			p_logo: logo || null,
+			p_cards: cards.length,
+			p_god: god,
+			p_best_tier: best.tier,
+			p_best_card: {
+				name: best.name,
+				image: best.image,
+				rarity: best.asReverse ? 'Reverse holo' : best.rarity,
+				price: best.price ?? null
+			},
+			p_value: Number(value.toFixed(2))
+		};
+		return this.queue(async () => {
+			const err = await this.call('record_open', params);
+			if (err) this.writeError = 'pack stats: ' + err;
+		});
+	}
+
+	// A failed write must never interrupt a pack being opened, but it must not take
+	// the rest of the pack down with it either: one bad row is skipped and counted.
+	record(cards: PackCard[]) {
+		if (!this.enabled || !cards.length) return Promise.resolve();
 		const profile = cloud.profileName || 'Unknown';
-		for (const c of cards) {
-			{
-				const { error } = await supabase.rpc('record_pull', {
+		const batch = cards.slice();
+		return this.queue(async () => {
+			let lost = 0;
+			let last = '';
+			for (const c of batch) {
+				const err = await this.call('record_pull', {
 					p_profile: profile,
 					p_card_id: c.id,
 					p_reverse: !!c.asReverse,
@@ -205,12 +232,13 @@ class LibraryStore {
 					p_rarity: c.rarity,
 					p_tier: c.tier
 				});
-				if (error) {
-					this.writeError = 'library: ' + error.message;
-					break; // one bad row means the rest will fail the same way
+				if (err) {
+					lost++;
+					last = err;
 				}
 			}
-		}
+			this.writeError = lost ? `library: ${lost}/${batch.length} cards not saved (${last})` : '';
+		});
 	}
 }
 

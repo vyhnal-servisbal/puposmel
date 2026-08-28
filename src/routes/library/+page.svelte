@@ -5,6 +5,7 @@
 	import { cloud } from '$lib/cloud.svelte';
 	import { TIER_COLORS, TIER_NAMES, raritySymbol } from '$lib/packs';
 	import { eraColor } from '$lib/setLook';
+	import { cachedSet, loadSet, preloadSets, type SetCard } from '$lib/setIndex';
 	import Card from '$lib/components/Card.svelte';
 
 	type Tab = 'recent' | 'sets' | 'packs';
@@ -17,6 +18,10 @@
 	let openSet = $state<string | null>(null);
 	let sort = $state<SortKey>('recent');
 	let picked = $state<LibRow | null>(null);
+	// how many cards each set holds in total, filled in as the lists arrive
+	let sizes = $state<Record<string, number>>({});
+	let setCards = $state<SetCard[]>([]);
+	let showMissing = $state(true);
 
 	onMount(() => {
 		// init first: load() filters by profile name and it is empty until then
@@ -62,6 +67,84 @@
 	let shownValue = $derived(shown.reduce((n, r) => n + (r.price ?? 0) * r.copies, 0));
 	let openSetName = $derived(library.sets.find((s) => s.id === openSet)?.name ?? '');
 
+	// A card counts as collected whichever finish it came in, so this is keyed on
+	// the card id alone: normal and reverse are two rows but one card in the set.
+	let ownedBySet = $derived.by(() => {
+		const by = new Map<string, Set<string>>();
+		for (const r of library.rows) {
+			const id = r.set_id ?? '';
+			if (!id) continue;
+			let s = by.get(id);
+			if (!s) by.set(id, (s = new Set()));
+			s.add(r.card_id);
+		}
+		return by;
+	});
+
+	function pct(setId: string): number {
+		const total = sizes[setId];
+		if (!total) return 0;
+		return Math.min(100, Math.round(((ownedBySet.get(setId)?.size ?? 0) / total) * 100));
+	}
+
+	// the sets tab needs every set's size for its bars
+	$effect(() => {
+		if (tab !== 'sets' || searching) return;
+		const ids = library.sets.map((s) => s.id);
+		for (const id of ids) {
+			const c = cachedSet(id);
+			if (c) sizes[id] = c.length;
+		}
+		preloadSets(ids, (id, cards) => (sizes[id] = cards.length));
+	});
+
+	// the open set needs the list itself, to know what is not there
+	$effect(() => {
+		const id = openSet;
+		if (!id) {
+			setCards = [];
+			return;
+		}
+		const have = cachedSet(id);
+		if (have) {
+			setCards = have;
+			sizes[id] = have.length;
+			return;
+		}
+		setCards = [];
+		loadSet(id).then((cards) => {
+			if (openSet !== id || !cards.length) return;
+			setCards = cards;
+			sizes[id] = cards.length;
+		});
+	});
+
+	// The whole set in set order, each slot either a card you have or a gap. Rows
+	// are merged per card so a normal and a reverse of the same one share a tile.
+	let slots = $derived.by(() => {
+		if (!openSet || !setCards.length) return [];
+		const byCard = new Map<string, LibRow[]>();
+		for (const r of library.rows) {
+			if (r.set_id !== openSet) continue;
+			const list = byCard.get(r.card_id);
+			if (list) list.push(r);
+			else byCard.set(r.card_id, [r]);
+		}
+		return setCards.map((c) => {
+			const rows = byCard.get(c.id) ?? [];
+			let best: LibRow | null = null;
+			let copies = 0;
+			for (const r of rows) {
+				copies += r.copies;
+				if (!best || r.tier > best.tier) best = r;
+			}
+			return { card: c, row: best, copies };
+		});
+	});
+
+	// the full set view only makes sense in set order, so sorting is for owned only
+	let fullSet = $derived(!!openSet && !searching && showMissing && slots.length > 0);
+
 	function money(v: number, unit = 'EUR'): string {
 		return v.toLocaleString('en-GB', {
 			style: 'currency',
@@ -101,6 +184,32 @@
 <svelte:head><title>Card library</title></svelte:head>
 <svelte:window onkeydown={(e) => e.key === 'Escape' && (picked ? (picked = null) : (openSet = null))} />
 
+<!-- one tile, used by both the plain grid and the full set view -->
+{#snippet tile(r: LibRow, copies: number)}
+	<button
+		class="cell"
+		class:hit={r.tier >= 3}
+		style="--c:{TIER_COLORS[r.tier] ?? '#8a83ad'}"
+		onclick={() => (picked = r)}
+	>
+		<span class="art">
+			{#if r.data?.image}
+				<img src={r.data.image} alt={r.data?.name ?? ''} loading="lazy" />
+			{/if}
+			{#if copies > 1}<span class="copies">×{copies}</span>{/if}
+			{#if r.reverse}<span class="rev">R</span>{/if}
+		</span>
+		<span class="meta">
+			<b>{r.data?.name ?? r.card_id}</b>
+			<i style="color:{TIER_COLORS[r.tier] ?? '#8a83ad'}">
+				<em>{raritySymbol(r.rarity ?? undefined)}</em>
+				{r.reverse ? 'Reverse holo' : (r.rarity ?? '')}
+			</i>
+			{#if r.price}<span class="price">{money(r.price, r.price_unit ?? 'EUR')}</span>{/if}
+		</span>
+	</button>
+{/snippet}
+
 <div class="wrap">
 	<header class="pagehead">
 		<div class="navrow">
@@ -115,7 +224,7 @@
 			<div class="stat"><b>{library.totalCards}</b><span>cards</span></div>
 			<div class="stat"><b>{library.totalPacks}</b><span>packs</span></div>
 			<div class="stat"><b>{money(library.totalValue)}</b><span>value</span></div>
-			<div class="stat"><b>{library.rows.filter((r) => r.tier >= 3).length}</b><span>hits</span></div>
+			<div class="stat"><b>{library.totalHits}</b><span>hits</span></div>
 			{#if library.totalGods}
 				<div class="stat god"><b>{library.totalGods}</b><span>god packs</span></div>
 			{/if}
@@ -173,7 +282,7 @@
 				</div>
 			{/if}
 
-			{#if searching || openSet || tab === 'recent'}
+			{#if (searching || openSet || tab === 'recent') && !fullSet}
 				<select bind:value={sort}>
 					<option value="recent">Newest first</option>
 					<option value="rarity">Rarest first</option>
@@ -189,6 +298,17 @@
 			<div class="crumb">
 				<button class="btn" onclick={() => (openSet = null)}>← All sets</button>
 				<strong>{openSetName}</strong>
+				{#if sizes[openSet]}
+					{@const own = ownedBySet.get(openSet)?.size ?? 0}
+					<span class="crumbprog" class:full={own >= sizes[openSet]}>
+						<span class="track"><i style="width:{pct(openSet)}%"></i></span>
+						<b>{own} / {sizes[openSet]}</b>
+						<i>{pct(openSet)}%</i>
+					</span>
+				{/if}
+				<button class="btn toggle" class:on={showMissing} onclick={() => (showMissing = !showMissing)}>
+					{showMissing ? '👁 Missing shown' : 'Show missing'}
+				</button>
 			</div>
 		{/if}
 
@@ -219,11 +339,19 @@
 			<div class="setgrid" in:fade={{ duration: 140 }}>
 				{#each library.sets as s (s.id)}
 					{@const meta = library.opens.find((o) => o.set_id === s.id)}
+					{@const total = sizes[s.id]}
+					{@const own = ownedBySet.get(s.id)?.size ?? 0}
 					<button class="setcard" style="--e:{eraColor(s.series)}" onclick={() => goSet(s.id)}>
 						<span class="slogo">
 							{#if meta?.logo}<img src={meta.logo} alt="" loading="lazy" />{:else}<i>{s.id}</i>{/if}
 						</span>
 						<strong>{s.name}</strong>
+						<span class="prog" class:full={!!total && own >= total}>
+							<span class="track"><i style="width:{total ? pct(s.id) : 0}%"></i></span>
+							<span class="ptext">
+								{#if total}{own} / {total} · {pct(s.id)}%{:else}counting…{/if}
+							</span>
+						</span>
 						<span class="smeta">{s.count} cards{meta ? ` · ${meta.packs} packs` : ''}</span>
 						{#if meta?.best_card}
 							<span class="sbest" style="--c:{TIER_COLORS[meta.best_tier] ?? '#8a83ad'}">
@@ -236,31 +364,31 @@
 					</button>
 				{/each}
 			</div>
+		{:else if fullSet}
+			<div class="grid" in:fade={{ duration: 140 }}>
+				{#each slots as s (s.card.id)}
+					{#if s.row}
+						{@render tile(s.row, s.copies)}
+					{:else}
+						<!-- not collected: the card sits there as a shadow of itself, so a
+						     hole in the set reads as a hole rather than as nothing -->
+						<div class="cell miss" title="{s.card.name} · not collected yet">
+							<span class="art">
+								<img src={s.card.image} alt="" loading="lazy" />
+								<span class="qm">?</span>
+							</span>
+							<span class="meta">
+								<b>{s.card.name}</b>
+								<i>#{s.card.number} · missing</i>
+							</span>
+						</div>
+					{/if}
+				{/each}
+			</div>
 		{:else}
 			<div class="grid" in:fade={{ duration: 140 }}>
 				{#each shown as r (r.id)}
-					<button
-						class="cell"
-						class:hit={r.tier >= 3}
-						style="--c:{TIER_COLORS[r.tier] ?? '#8a83ad'}"
-						onclick={() => (picked = r)}
-					>
-						<span class="art">
-							{#if r.data?.image}
-								<img src={r.data.image} alt={r.data?.name ?? ''} loading="lazy" />
-							{/if}
-							{#if r.copies > 1}<span class="copies">×{r.copies}</span>{/if}
-							{#if r.reverse}<span class="rev">R</span>{/if}
-						</span>
-						<span class="meta">
-							<b>{r.data?.name ?? r.card_id}</b>
-							<i style="color:{TIER_COLORS[r.tier] ?? '#8a83ad'}">
-								<em>{raritySymbol(r.rarity ?? undefined)}</em>
-								{r.reverse ? 'Reverse holo' : (r.rarity ?? '')}
-							</i>
-							{#if r.price}<span class="price">{money(r.price, r.price_unit ?? 'EUR')}</span>{/if}
-						</span>
-					</button>
+					{@render tile(r, r.copies)}
 				{/each}
 				{#if !shown.length}
 					<p class="note">Nothing matches that.</p>
@@ -552,6 +680,84 @@
 		font-size: 0.71rem;
 		color: #8f88b4;
 	}
+
+	/* how far through the set you are, in the set's own era colour */
+	.prog {
+		display: grid;
+		gap: 0.2rem;
+		width: 100%;
+		margin: 0.25rem 0 0.1rem;
+	}
+	.track {
+		display: block;
+		height: 5px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.08);
+		overflow: hidden;
+	}
+	.track i {
+		display: block;
+		height: 100%;
+		border-radius: 999px;
+		background: linear-gradient(90deg, color-mix(in srgb, var(--e, #8a83ad) 55%, #000), var(--e, #8a83ad));
+		transition: width 0.4s ease;
+	}
+	.ptext {
+		font-size: 0.66rem;
+		letter-spacing: 0.04em;
+		color: #8f88b4;
+		font-variant-numeric: tabular-nums;
+	}
+	.prog.full .track i {
+		background: linear-gradient(90deg, #ffb454, #ffe066);
+	}
+	.prog.full .ptext {
+		color: #ffe066;
+	}
+
+	/* the same bar again, laid out along the breadcrumb of the open set */
+	.crumbprog {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 160px;
+		max-width: 320px;
+		flex: 1;
+	}
+	.crumbprog .track {
+		flex: 1;
+	}
+	.crumbprog .track i {
+		background: linear-gradient(90deg, #6f5ad8, #9b8cff);
+	}
+	.crumbprog b,
+	.crumbprog i {
+		font-style: normal;
+		font-size: 0.74rem;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.crumbprog b {
+		color: #ddd8f2;
+	}
+	.crumbprog i {
+		color: #8f88b4;
+	}
+	.crumbprog.full .track i {
+		background: linear-gradient(90deg, #ffb454, #ffe066);
+	}
+	.crumbprog.full b {
+		color: #ffe066;
+	}
+	.toggle {
+		margin-left: auto;
+		white-space: nowrap;
+	}
+	.toggle.on {
+		border-color: rgba(155, 140, 255, 0.6);
+		background: rgba(111, 90, 216, 0.22);
+		color: #d9d1ff;
+	}
 	.sbest {
 		display: flex;
 		align-items: center;
@@ -732,6 +938,47 @@
 		aspect-ratio: 63 / 88;
 		object-fit: contain;
 	}
+	/* A card you do not have yet: dark enough to be a shape rather than a card,
+	   bright enough on hover to see what you are chasing. */
+	.cell.miss {
+		cursor: default;
+		border-style: dashed;
+		border-color: rgba(255, 255, 255, 0.08);
+		background: rgba(255, 255, 255, 0.012);
+	}
+	.cell.miss:hover {
+		transform: none;
+		border-color: rgba(255, 255, 255, 0.16);
+	}
+	.cell.miss img {
+		filter: grayscale(1) brightness(0.17) contrast(1.3);
+		transition: filter 0.25s ease;
+	}
+	.cell.miss:hover img {
+		filter: grayscale(0.55) brightness(0.5) contrast(1.05);
+	}
+	.cell.miss .meta b {
+		color: #6a648a;
+	}
+	.cell.miss .meta i {
+		color: #57527a;
+	}
+	.qm {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		font-size: 2rem;
+		font-weight: 800;
+		color: rgba(255, 255, 255, 0.16);
+		text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+		pointer-events: none;
+		transition: opacity 0.25s ease;
+	}
+	.cell.miss:hover .qm {
+		opacity: 0;
+	}
+
 	.copies,
 	.rev {
 		position: absolute;

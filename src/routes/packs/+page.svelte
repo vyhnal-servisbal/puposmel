@@ -21,10 +21,22 @@
 		// without this the profile name is still empty here, so pulls were filed
 		// under "Unknown" while the library read them under the real name
 		await cloud.init();
+		// the lifetime totals in the header are the library's own numbers. Loading
+		// them once and refreshing after each pack is far cheaper than a realtime
+		// subscription, which would reload the whole collection ten times a pack.
+		library.load();
 		sets = await listSets();
 		const saved = localStorage.getItem('packmode');
 		if (saved === 'instant' || saved === 'stack') mode = saved;
 	});
+
+	function money(v: number, unit = 'EUR'): string {
+		return v.toLocaleString('en-GB', {
+			style: 'currency',
+			currency: unit,
+			maximumFractionDigits: v >= 500 ? 0 : 2
+		});
+	}
 
 	$effect(() => {
 		localStorage.setItem('packmode', mode);
@@ -41,10 +53,16 @@
 		return sets.filter((s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q));
 	});
 
+	// The mode is frozen the moment a pack is torn open. Flipping the switch used
+	// to re-run a pack that was already open: instant showed the summary, then
+	// switching to one by one found idx back at 0 and dealt the same ten cards
+	// again, and going the other way left the opened pack stuck on screen.
+	let packMode = $state<'stack' | 'instant'>('stack');
+
 	let pack = $derived(packs.pack);
 	let cards = $derived(pack?.cards ?? []);
 	let remaining = $derived(cards.slice(idx));
-	let finished = $derived(!!pack && (mode === 'instant' || idx >= cards.length));
+	let finished = $derived(!!pack && (packMode === 'instant' || idx >= cards.length));
 
 	let look = $state<Look | null>(null);
 
@@ -71,6 +89,7 @@
 	function open() {
 		if (phase !== 'idle') return;
 		phase = 'tearing';
+		packMode = mode;
 		setTimeout(() => {
 			packs.open();
 			idx = 0;
@@ -79,19 +98,23 @@
 			warm(packs.pack?.cards[0]);
 			warm(packs.pack?.cards[1]);
 			if (packs.pack) {
-				library.record(packs.pack.cards);
-				library.recordOpen(
-					packs.setId,
-					packs.setName,
-					packs.logo,
-					packs.pack.cards,
-					packs.pack.god
-				);
+				// both writes are queued in the store, so the reload only runs once
+				// the cloud actually has this pack in it
+				Promise.all([
+					library.record(packs.pack.cards),
+					library.recordOpen(
+						packs.setId,
+						packs.setName,
+						packs.logo,
+						packs.pack.cards,
+						packs.pack.god
+					)
+				]).then(() => library.load());
 			}
 			const best = Math.max(0, ...(packs.pack?.cards ?? []).map((c) => c.tier));
 			if (packs.pack?.god) flashNow(6);
-			else if (mode === 'instant' && best >= 4) flashNow(best);
-			else if (mode === 'stack') {
+			else if (packMode === 'instant' && best >= 4) flashNow(best);
+			else if (packMode === 'stack') {
 				const first = packs.pack?.cards[0];
 				if (first && first.tier >= 4) flashNow(first.tier);
 			}
@@ -197,7 +220,36 @@
 					<span>⚡</span> All at once
 				</button>
 			</div>
+			{#if pack && mode !== packMode}
+				<span class="hint">applies to the next pack</span>
+			{/if}
 		</div>
+
+		<!-- the run counter and the lifetime totals live up here, so they stay in one
+		     place whether the pack is sitting closed or already torn open -->
+		{#if packs.setId && !packs.loading && !packs.error}
+			<div class="board" style={wrapStyle}>
+				<div class="setline">
+					<strong>{packs.setName}</strong>
+					<span>{packs.model} · {packs.size} cards</span>
+				</div>
+				<div class="opened">
+					<b>{packs.opened}</b>
+					<i>opened</i>
+					{#if packs.godCount}<em>{packs.godCount} god</em>{/if}
+				</div>
+				<div class="life">
+					<span><b>{library.totalHits}</b> hits</span>
+					<span><b>{library.totalCards}</b> cards</span>
+					<span><b>{library.totalPacks}</b> packs</span>
+					<span><b>{money(library.totalValue)}</b> value</span>
+					<span class:god={library.totalGods > 0}><b>{library.totalGods}</b> god packs</span>
+				</div>
+				{#if library.writeError}
+					<p class="werr">{library.writeError}</p>
+				{/if}
+			</div>
+		{/if}
 	</header>
 
 	{#if !packs.setId}
@@ -255,15 +307,6 @@
 		<section class="mid"><p class="err">Could not load that set: {packs.error}</p></section>
 	{:else if !pack}
 		<section class="mid" in:fade={{ duration: 150 }}>
-			<div class="setline" style={wrapStyle}>
-				<strong>{packs.setName}</strong>
-				<span>{packs.model} · {packs.size} cards</span>
-			</div>
-			<div class="opened">
-				<b>{packs.opened}</b>
-				<i>opened</i>
-				{#if packs.godCount}<em>{packs.godCount} god</em>{/if}
-			</div>
 			<button
 				class="pack"
 				class:tearing={phase === 'tearing'}
@@ -302,7 +345,7 @@
 				</p>
 			{/if}
 		</section>
-	{:else if mode === 'stack' && !finished}
+	{:else if packMode === 'stack' && !finished}
 		<section class="table" in:fade={{ duration: 150 }}>
 			<div class="counter">{idx + 1} <i>/ {cards.length}</i></div>
 
@@ -358,7 +401,7 @@
 						class="cell"
 						class:hit={c.hit}
 						style="--c:{TIER_COLORS[c.tier]}"
-						in:fly={{ y: 14, duration: 220, delay: mode === 'instant' ? i * 55 : 0 }}
+						in:fly={{ y: 14, duration: 220, delay: packMode === 'instant' ? i * 55 : 0 }}
 						onclick={() => (preview = c)}
 					>
 						<img src={c.image} alt={c.name} loading="lazy" />
@@ -634,9 +677,74 @@
 		color: #8f88b4;
 	}
 
+	.hint {
+		font-size: 0.74rem;
+		color: #8f88b4;
+	}
+
+	/* one panel holding the set, the run counter and the lifetime totals, tinted by
+	   the set so it belongs to the pack sitting under it */
+	.board {
+		display: grid;
+		justify-items: center;
+		gap: 0.5rem;
+		width: max-content;
+		max-width: 100%;
+		margin: 0.9rem auto 0;
+		padding: 0.8rem 1.3rem 0.9rem;
+		border-radius: 20px;
+		border: 1px solid color-mix(in srgb, var(--accent) 28%, rgba(255, 255, 255, 0.08));
+		background:
+			radial-gradient(
+				130% 150% at 50% -40%,
+				color-mix(in srgb, var(--accent) 15%, transparent),
+				transparent 70%
+			),
+			rgba(255, 255, 255, 0.03);
+	}
+	.life {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.3rem;
+	}
+	.life span {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.32rem;
+		padding: 0.24rem 0.62rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: rgba(255, 255, 255, 0.035);
+		font-size: 0.66rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: #8f88b4;
+	}
+	.life b {
+		font-size: 0.88rem;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0;
+		text-transform: none;
+		color: #ddd8f2;
+	}
+	.life span.god {
+		border-color: rgba(255, 224, 102, 0.45);
+		background: rgba(255, 224, 102, 0.1);
+		color: #cbb87d;
+	}
+	.life span.god b {
+		color: #ffe066;
+	}
+	.werr {
+		margin: 0.2rem 0 0;
+		font-size: 0.72rem;
+		color: #ff9a8a;
+	}
+
 	.mid {
 		max-width: 1100px;
-		margin: 1.6rem auto 0;
+		margin: 0.9rem auto 0;
 		display: grid;
 		place-items: center;
 		gap: 0.7rem;
