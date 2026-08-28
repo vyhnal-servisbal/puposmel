@@ -32,25 +32,41 @@
 		return () => library.unwatch();
 	});
 
-	// Typing searches the whole collection, no matter which tab you were on,
-	// because looking for one card is the thing you do most often.
+	// Typing searches whatever is in front of you: the set list while you are
+	// looking at sets, the cards of one set once you are inside it, and the whole
+	// collection anywhere else.
 	let searching = $derived(query.trim().length > 0);
+	let setSearch = $derived(searching && tab === 'sets' && !openSet);
+	let cardSearch = $derived(searching && !setSearch);
+
+	let filteredSets = $derived.by(() => {
+		const q = query.trim().toLowerCase();
+		if (!q) return library.sets;
+		return library.sets.filter(
+			(s) =>
+				s.name.toLowerCase().includes(q) ||
+				s.id.toLowerCase().includes(q) ||
+				(s.series ?? '').toLowerCase().includes(q)
+		);
+	});
 
 	let shown = $derived.by(() => {
 		const q = query.trim().toLowerCase();
 		let out = library.rows;
 
-		if (q) {
+		// inside a set the search never leaves it
+		if (openSet) out = out.filter((r) => r.set_id === openSet);
+
+		if (cardSearch) {
 			out = out.filter(
 				(r) =>
 					(r.data?.name ?? '').toLowerCase().includes(q) ||
 					(r.rarity ?? '').toLowerCase().includes(q) ||
+					(r.data?.number ?? '').toLowerCase().includes(q) ||
 					(r.data?.set ?? '').toLowerCase().includes(q) ||
 					(r.set_id ?? '').toLowerCase().includes(q)
 			);
-		} else if (openSet) {
-			out = out.filter((r) => r.set_id === openSet);
-		} else if (tab === 'recent') {
+		} else if (!openSet && tab === 'recent') {
 			return library.recent.slice(0, RECENT_N);
 		}
 
@@ -89,7 +105,7 @@
 
 	// the sets tab needs every set's size for its bars
 	$effect(() => {
-		if (tab !== 'sets' || searching) return;
+		if (tab !== 'sets') return;
 		const ids = library.sets.map((s) => s.id);
 		for (const id of ids) {
 			const c = cachedSet(id);
@@ -130,7 +146,15 @@
 			if (list) list.push(r);
 			else byCard.set(r.card_id, [r]);
 		}
-		return setCards.map((c) => {
+		// a card you do not own has no rarity to match on, so the search here is by
+		// name and number, which is all a shadow shows anyway
+		const q = query.trim().toLowerCase();
+		const list = q
+			? setCards.filter(
+					(c) => c.name.toLowerCase().includes(q) || c.number.toLowerCase().includes(q)
+				)
+			: setCards;
+		return list.map((c) => {
 			const rows = byCard.get(c.id) ?? [];
 			let best: LibRow | null = null;
 			let copies = 0;
@@ -143,7 +167,7 @@
 	});
 
 	// the full set view only makes sense in set order, so sorting is for owned only
-	let fullSet = $derived(!!openSet && !searching && showMissing && slots.length > 0);
+	let fullSet = $derived(!!openSet && showMissing && setCards.length > 0);
 
 	function money(v: number, unit = 'EUR'): string {
 		return v.toLocaleString('en-GB', {
@@ -263,12 +287,20 @@
 		</div>
 	{:else}
 		<div class="controls">
-			<input class="search" placeholder="Search any card, set or rarity..." bind:value={query} />
+			<input
+				class="search"
+				placeholder={openSet
+					? `Search in ${openSetName}...`
+					: tab === 'sets'
+						? 'Search sets...'
+						: 'Search any card, set or rarity...'}
+				bind:value={query}
+			/>
 			{#if query}
 				<button class="clear" onclick={() => (query = '')}>✕</button>
 			{/if}
 
-			{#if !searching}
+			{#if !cardSearch}
 				<div class="tabs">
 					<button class:on={tab === 'recent' && !openSet} onclick={() => { tab = 'recent'; openSet = null; }}>
 						Recent
@@ -282,7 +314,7 @@
 				</div>
 			{/if}
 
-			{#if (searching || openSet || tab === 'recent') && !fullSet}
+			{#if !setSearch && !fullSet && (cardSearch || openSet || tab === 'recent')}
 				<select bind:value={sort}>
 					<option value="recent">Newest first</option>
 					<option value="rarity">Rarest first</option>
@@ -291,10 +323,16 @@
 					<option value="name">By name</option>
 				</select>
 			{/if}
-			<span class="count">{shown.length} · {money(shownValue)}</span>
+			<span class="count">
+				{#if setSearch}
+					{filteredSets.length} set{filteredSets.length === 1 ? '' : 's'}
+				{:else}
+					{shown.length} · {money(shownValue)}
+				{/if}
+			</span>
 		</div>
 
-		{#if openSet && !searching}
+		{#if openSet}
 			<div class="crumb">
 				<button class="btn" onclick={() => (openSet = null)}>← All sets</button>
 				<strong>{openSetName}</strong>
@@ -312,7 +350,7 @@
 			</div>
 		{/if}
 
-		{#if !searching && tab === 'packs'}
+		{#if !cardSearch && tab === 'packs'}
 			<div class="packlist" in:fade={{ duration: 140 }}>
 				{#each library.opens as o (o.id)}
 					<button class="prow" onclick={() => goSet(o.set_id)}>
@@ -335,9 +373,9 @@
 					</button>
 				{/each}
 			</div>
-		{:else if !searching && tab === 'sets' && !openSet}
+		{:else if tab === 'sets' && !openSet}
 			<div class="setgrid" in:fade={{ duration: 140 }}>
-				{#each library.sets as s (s.id)}
+				{#each filteredSets as s (s.id)}
 					{@const meta = library.opens.find((o) => o.set_id === s.id)}
 					{@const total = sizes[s.id]}
 					{@const own = ownedBySet.get(s.id)?.size ?? 0}
@@ -363,6 +401,9 @@
 						{/if}
 					</button>
 				{/each}
+				{#if !filteredSets.length}
+					<p class="note">No set matches that.</p>
+				{/if}
 			</div>
 		{:else if fullSet}
 			<div class="grid" in:fade={{ duration: 140 }}>
@@ -384,6 +425,9 @@
 						</div>
 					{/if}
 				{/each}
+				{#if !slots.length}
+					<p class="note">Nothing in this set matches that.</p>
+				{/if}
 			</div>
 		{:else}
 			<div class="grid" in:fade={{ duration: 140 }}>

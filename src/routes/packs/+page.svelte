@@ -223,6 +223,18 @@
 			{#if pack && mode !== packMode}
 				<span class="hint">applies to the next pack</span>
 			{/if}
+
+			<!-- lifetime totals, out of the way in the corner: they are a running
+			     tally, not something you read while a pack is being opened -->
+			{#if library.rows.length}
+				<div class="life">
+					<span><b>{library.totalHits}</b> hits</span>
+					<span><b>{library.totalCards}</b> cards</span>
+					<span><b>{library.totalPacks}</b> packs</span>
+					<span><b>{money(library.totalValue)}</b> value</span>
+					<span class:god={library.totalGods > 0}><b>{library.totalGods}</b> god packs</span>
+				</div>
+			{/if}
 		</div>
 
 		<!-- the run counter and the lifetime totals live up here, so they stay in one
@@ -237,13 +249,6 @@
 					<b>{packs.opened}</b>
 					<i>opened</i>
 					{#if packs.godCount}<em>{packs.godCount} god</em>{/if}
-				</div>
-				<div class="life">
-					<span><b>{library.totalHits}</b> hits</span>
-					<span><b>{library.totalCards}</b> cards</span>
-					<span><b>{library.totalPacks}</b> packs</span>
-					<span><b>{money(library.totalValue)}</b> value</span>
-					<span class:god={library.totalGods > 0}><b>{library.totalGods}</b> god packs</span>
 				</div>
 				{#if library.writeError}
 					<p class="werr">{library.writeError}</p>
@@ -705,8 +710,9 @@
 	.life {
 		display: flex;
 		flex-wrap: wrap;
-		justify-content: center;
+		justify-content: flex-end;
 		gap: 0.3rem;
+		margin-left: auto;
 	}
 	.life span {
 		display: inline-flex;
