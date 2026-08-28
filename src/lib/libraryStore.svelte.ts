@@ -21,8 +21,24 @@ export interface LibRow {
 	last_at: string;
 }
 
+export interface OpenRow {
+	id: string;
+	set_id: string;
+	set_name: string | null;
+	logo: string | null;
+	packs: number;
+	cards: number;
+	gods: number;
+	best_tier: number;
+	best_card: { name?: string; image?: string; rarity?: string; price?: number } | null;
+	spent: number;
+	first_at: string;
+	last_at: string;
+}
+
 class LibraryStore {
 	rows = $state<LibRow[]>([]);
+	opens = $state<OpenRow[]>([]);
 	loading = $state(false);
 	error = $state('');
 	enabled = hasSupabase;
@@ -38,8 +54,38 @@ class LibraryStore {
 	get totalValue(): number {
 		return this.rows.reduce((n, r) => n + (r.price ?? 0) * r.copies, 0);
 	}
-	get sets(): string[] {
-		return [...new Set(this.rows.map((r) => r.data?.set ?? r.set_id ?? ''))].filter(Boolean).sort();
+	get sets(): { id: string; name: string; count: number; series: string }[] {
+		const by = new Map<string, { id: string; name: string; count: number; series: string }>();
+		for (const r of this.rows) {
+			const id = r.set_id ?? '';
+			if (!id) continue;
+			const cur = by.get(id);
+			if (cur) cur.count += r.copies;
+			else
+				by.set(id, {
+					id,
+					name: r.data?.set ?? id,
+					count: r.copies,
+					series: r.data?.series ?? ''
+				});
+		}
+		return [...by.values()].sort((a, b) => b.count - a.count);
+	}
+
+	get totalPacks(): number {
+		return this.opens.reduce((n, o) => n + o.packs, 0);
+	}
+	get totalGods(): number {
+		return this.opens.reduce((n, o) => n + o.gods, 0);
+	}
+	get bestEver(): OpenRow | null {
+		let best: OpenRow | null = null;
+		for (const o of this.opens) if (!best || o.best_tier > best.best_tier) best = o;
+		return best?.best_card ? best : null;
+	}
+	// newest first, which is what the library opens on
+	get recent(): LibRow[] {
+		return [...this.rows].sort((a, b) => b.last_at.localeCompare(a.last_at));
 	}
 
 	async load() {
@@ -59,6 +105,13 @@ class LibraryStore {
 				.order('last_at', { ascending: false });
 			if (error) throw error;
 			this.rows = (data ?? []) as LibRow[];
+
+			const opens = await supabase
+				.from('pack_opens')
+				.select('*')
+				.eq('profile_name', profile)
+				.order('packs', { ascending: false });
+			if (!opens.error) this.opens = (opens.data ?? []) as OpenRow[];
 		} catch (e) {
 			this.error = e instanceof Error ? e.message : 'failed';
 		} finally {
@@ -77,6 +130,11 @@ class LibraryStore {
 				{ event: '*', schema: 'public', table: 'card_library' },
 				() => this.load()
 			)
+			.on(
+				'postgres_changes',
+				{ event: '*', schema: 'public', table: 'pack_opens' },
+				() => this.load()
+			)
 			.subscribe();
 	}
 
@@ -84,6 +142,40 @@ class LibraryStore {
 		if (this.channel) {
 			supabase.removeChannel(this.channel);
 			this.channel = null;
+		}
+	}
+
+	// One row per set: how many packs went through it and the best thing it gave up.
+	async recordOpen(
+		setId: string,
+		setName: string,
+		logo: string,
+		cards: PackCard[],
+		god: boolean
+	) {
+		if (!this.enabled || !cards.length) return;
+		let best = cards[0];
+		for (const c of cards) if (c.tier > best.tier) best = c;
+		const value = cards.reduce((n, c) => n + (c.price ?? 0), 0);
+		try {
+			await supabase.rpc('record_open', {
+				p_profile: cloud.profileName || 'Unknown',
+				p_set_id: setId,
+				p_set_name: setName,
+				p_logo: logo || null,
+				p_cards: cards.length,
+				p_god: god,
+				p_best_tier: best.tier,
+				p_best_card: {
+					name: best.name,
+					image: best.image,
+					rarity: best.asReverse ? 'Reverse holo' : best.rarity,
+					price: best.price ?? null
+				},
+				p_value: Number(value.toFixed(2))
+			});
+		} catch {
+			/* stats are not worth breaking an opening over */
 		}
 	}
 

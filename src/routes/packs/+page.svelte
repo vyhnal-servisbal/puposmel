@@ -74,7 +74,16 @@
 			phase = 'revealing';
 			warm(packs.pack?.cards[0]);
 			warm(packs.pack?.cards[1]);
-			if (packs.pack) library.record(packs.pack.cards);
+			if (packs.pack) {
+				library.record(packs.pack.cards);
+				library.recordOpen(
+					packs.setId,
+					packs.setName,
+					packs.logo,
+					packs.pack.cards,
+					packs.pack.god
+				);
+			}
 			const best = Math.max(0, ...(packs.pack?.cards ?? []).map((c) => c.tier));
 			if (packs.pack?.god) flashNow(6);
 			else if (mode === 'instant' && best >= 4) flashNow(best);
@@ -169,7 +178,10 @@
 		<div class="navrow">
 			<a class="btn" href="/">← Binder</a>
 			<a class="btn" href="/game">Unboxing</a>
-			<a class="btn" href="/library">📚 Library</a>
+			<a class="btn lib" href="/library">📚 Library</a>
+			{#if packs.setId}
+				<button class="btn" onclick={backToSets}>Change set</button>
+			{/if}
 		</div>
 
 		<div class="bar">
@@ -182,7 +194,6 @@
 				<span class="chip">{packs.model} · {packs.size} cards</span>
 				<span class="chip">{packs.opened} opened</span>
 				{#if packs.godCount}<span class="chip god">{packs.godCount} god</span>{/if}
-				<button class="btn ghost" onclick={backToSets}>Change set</button>
 			{/if}
 		</div>
 	</header>
@@ -430,6 +441,18 @@
 	}
 	.btn:hover {
 		border-color: rgba(255, 175, 95, 0.7);
+	}
+	/* the library is the thing you actually want to reach from here, so it does not
+	   look like the two navigation links beside it */
+	.btn.lib {
+		border-color: rgba(150, 200, 255, 0.6);
+		background: linear-gradient(180deg, rgba(90, 169, 230, 0.28), rgba(60, 110, 200, 0.12));
+		color: #dbeeff;
+		font-weight: 600;
+	}
+	.btn.lib:hover {
+		border-color: #9ecbff;
+		box-shadow: 0 0 16px rgba(120, 180, 255, 0.35);
 	}
 	.btn.primary {
 		background: linear-gradient(180deg, rgba(255, 170, 80, 0.25), rgba(255, 120, 40, 0.12));

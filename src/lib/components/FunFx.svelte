@@ -463,11 +463,27 @@
 		margin: 0;
 		font-size: 1.15rem;
 	}
+	/* A black silhouette on a dark panel was nearly invisible. The show puts it on
+	   a bright backdrop for exactly this reason, so the panel lights up while the
+	   answer is hidden and calms down once the artwork is revealed. */
+	.silo {
+		display: grid;
+		place-items: center;
+		padding: 0.9rem 1.4rem;
+		border-radius: 16px;
+		background: radial-gradient(circle at 50% 42%, #dcecff, #8fbde8 58%, #5b8fc4);
+		box-shadow: inset 0 0 26px rgba(20, 50, 90, 0.35);
+		transition: background 0.45s ease;
+	}
+	.silo.revealed {
+		background: radial-gradient(circle at 50% 42%, #2b2d3a, #1a1b23);
+		box-shadow: none;
+	}
 	.silo img {
 		width: min(210px, 52vw);
 		height: auto;
 		/* real artwork, blacked out until you answer */
-		filter: brightness(0);
+		filter: brightness(0) drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35));
 		transition: filter 0.45s ease;
 	}
 	.silo.revealed img {
