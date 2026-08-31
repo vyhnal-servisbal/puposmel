@@ -34,7 +34,8 @@
 		{ icon: '📚', label: 'Card library', href: '/library' },
 		{ icon: '⚔️', label: 'Pack battle', href: '/battle' },
 		{ icon: '🃏', label: 'Pexeso', href: '/pexeso' },
-		{ icon: '🎰', label: 'Slots', href: '/slots' }
+		{ icon: '🎰', label: 'Slots', href: '/slots' },
+		{ icon: '👆', label: 'Pokémon Clicker', href: '/clicker' }
 	];
 
 	let gamesOpen = $state(false);

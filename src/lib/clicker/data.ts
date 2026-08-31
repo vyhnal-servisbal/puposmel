@@ -283,6 +283,120 @@ export function sceneOf(type: string): Scene {
 	return SCENES[type] ?? SCENES.normal;
 }
 
+// ---------------------------------------------------------------------------
+// One palette per zone was not enough: eight stages in a row looked identical.
+// The silhouettes, the hour of the day and the thing in the foreground are all
+// drawn from the stage number as well, so no two stages in a zone match.
+
+const RIDGE_FAR = [
+	'polygon(0 62%,9% 40%,18% 55%,28% 28%,38% 48%,50% 22%,61% 47%,71% 32%,82% 52%,92% 38%,100% 58%,100% 100%,0 100%)',
+	'polygon(0 55%,14% 30%,26% 52%,40% 24%,55% 50%,68% 28%,80% 46%,90% 34%,100% 50%,100% 100%,0 100%)',
+	'polygon(0 68%,10% 52%,22% 62%,33% 38%,45% 58%,58% 34%,70% 56%,84% 40%,100% 62%,100% 100%,0 100%)',
+	'polygon(0 45%,12% 58%,24% 36%,36% 54%,48% 30%,60% 52%,72% 34%,86% 56%,100% 42%,100% 100%,0 100%)',
+	'polygon(0 58%,8% 34%,20% 60%,30% 26%,44% 56%,56% 30%,66% 58%,78% 24%,90% 54%,100% 36%,100% 100%,0 100%)'
+];
+
+const RIDGE_MID = [
+	'polygon(0 70%,8% 48%,16% 66%,24% 44%,32% 62%,42% 40%,52% 60%,62% 42%,72% 64%,84% 46%,94% 62%,100% 50%,100% 100%,0 100%)',
+	'polygon(0 60%,7% 74%,14% 54%,21% 70%,29% 50%,37% 68%,46% 52%,55% 72%,64% 54%,74% 70%,84% 52%,93% 68%,100% 56%,100% 100%,0 100%)',
+	'polygon(0 66%,12% 50%,24% 68%,35% 46%,48% 64%,58% 44%,70% 66%,84% 48%,100% 68%,100% 100%,0 100%)',
+	'polygon(0 52%,10% 68%,20% 50%,32% 66%,44% 48%,56% 70%,68% 50%,80% 66%,92% 48%,100% 62%,100% 100%,0 100%)'
+];
+
+// the foreground band: what the fight is actually standing among
+export const DECOR = [
+	{
+		key: 'trees',
+		// a saw of narrow triangles reads as a treeline at this size
+		shape:
+			'polygon(0 100%,3% 52%,6% 100%,10% 44%,14% 100%,18% 56%,22% 100%,26% 40%,30% 100%,34% 58%,38% 100%,43% 46%,47% 100%,51% 60%,55% 100%,60% 42%,64% 100%,68% 56%,72% 100%,77% 48%,81% 100%,85% 58%,89% 100%,94% 44%,97% 100%,100% 56%,100% 100%)'
+	},
+	{
+		key: 'rocks',
+		shape:
+			'polygon(0 100%,4% 74%,10% 66%,16% 78%,24% 62%,32% 76%,40% 64%,48% 80%,56% 66%,64% 76%,72% 60%,80% 78%,88% 66%,95% 76%,100% 68%,100% 100%)'
+	},
+	{
+		key: 'crystals',
+		shape:
+			'polygon(0 100%,5% 40%,9% 100%,15% 30%,20% 100%,28% 46%,33% 100%,41% 26%,46% 100%,54% 44%,59% 100%,67% 32%,72% 100%,80% 48%,85% 100%,93% 34%,98% 100%,100% 100%)'
+	},
+	{
+		key: 'waves',
+		shape:
+			'polygon(0 82%,8% 74%,16% 84%,24% 74%,32% 84%,40% 74%,48% 84%,56% 74%,64% 84%,72% 74%,80% 84%,88% 74%,96% 84%,100% 76%,100% 100%,0 100%)'
+	},
+	{
+		key: 'towers',
+		shape:
+			'polygon(0 100%,0 78%,7% 78%,7% 46%,15% 46%,15% 78%,26% 78%,26% 34%,36% 34%,36% 78%,48% 78%,48% 54%,58% 54%,58% 78%,70% 78%,70% 40%,80% 40%,80% 78%,92% 78%,92% 60%,100% 60%,100% 100%)'
+	},
+	{
+		key: 'dunes',
+		shape: 'polygon(0 88%,18% 74%,38% 86%,58% 72%,78% 86%,100% 76%,100% 100%,0 100%)'
+	}
+];
+
+export type Hour = 'day' | 'sunset' | 'night' | 'dawn';
+
+export const HOURS: Record<Hour, { wash: string; orbSize: number; orbTop: number; dim: number; stars: boolean }> = {
+	day: { wash: 'transparent', orbSize: 74, orbTop: 12, dim: 0, stars: false },
+	sunset: {
+		wash: 'linear-gradient(180deg, rgba(255,138,52,0.34), rgba(255,86,120,0.2) 45%, rgba(60,20,50,0.25))',
+		orbSize: 104,
+		orbTop: 46,
+		dim: 0.12,
+		stars: false
+	},
+	night: {
+		wash: 'linear-gradient(180deg, rgba(8,12,44,0.62), rgba(4,6,26,0.48))',
+		orbSize: 52,
+		orbTop: 10,
+		dim: 0.45,
+		stars: true
+	},
+	dawn: {
+		wash: 'linear-gradient(180deg, rgba(255,178,206,0.3), rgba(255,224,150,0.16) 50%, transparent)',
+		orbSize: 84,
+		orbTop: 30,
+		dim: 0.06,
+		stars: false
+	}
+};
+
+const HOUR_KEYS: Hour[] = ['day', 'day', 'sunset', 'night', 'dawn'];
+
+// deterministic, so walking back to stage 41 shows the same place you left
+function hash(n: number): number {
+	const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+	return x - Math.floor(x);
+}
+
+export interface Variant {
+	far: string;
+	mid: string;
+	near: string;
+	decor: string;
+	hour: Hour;
+	orbX: number;
+	flip: boolean;
+}
+
+export function variantOf(stage: number): Variant {
+	const d = DECOR[Math.floor(hash(stage * 3.7 + 19) * DECOR.length)];
+	return {
+		far: RIDGE_FAR[Math.floor(hash(stage) * RIDGE_FAR.length)],
+		mid: RIDGE_MID[Math.floor(hash(stage * 2.13 + 7) * RIDGE_MID.length)],
+		near: d.shape,
+		decor: d.key,
+		// the very first stages are always daylight, a pitch black opening is a poor
+		// first look at the game
+		hour: stage <= 2 ? 'day' : HOUR_KEYS[Math.floor(hash(stage * 5.1 + 3) * HOUR_KEYS.length)],
+		orbX: 10 + Math.floor(hash(stage * 7.7 + 41) * 74),
+		flip: hash(stage * 11.3 + 5) > 0.5
+	};
+}
+
 // The party. Cost and dps both climb about an order of magnitude a slot, which
 // is what makes a new recruit feel like a jump rather than a rounding error.
 export interface Member {

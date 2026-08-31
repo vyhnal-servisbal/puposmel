@@ -29,6 +29,7 @@ export interface Save {
 	tapLevel: number;
 	party: Record<string, number>;
 	ups: Record<string, 1>;
+	farm: boolean;
 	candy: number;
 	perks: Record<string, number>;
 	rebirths: number;
@@ -57,6 +58,7 @@ function emptySave(): Save {
 		tapLevel: 1,
 		party: {},
 		ups: {},
+		farm: false,
 		candy: 0,
 		perks: {},
 		rebirths: 0,
@@ -330,7 +332,9 @@ class Game {
 	spawn() {
 		const stage = this.save.stage;
 		const zone = zoneOf(stage);
-		const boss = isBossStage(stage);
+		// A boss would end the farm the moment you beat it, so while the lock is on
+		// even a boss stage sends wild ones.
+		const boss = isBossStage(stage) && !this.save.farm;
 		const mon = boss ? zone.boss : zone.mons[Math.floor(this.rng() * zone.mons.length)];
 		const shiny = this.rng() * SHINY_ODDS < 1;
 		const maxHp = hpAt(stage) * (boss ? 10 : 1);
@@ -371,7 +375,10 @@ class Game {
 		if (f.shiny) row.s++;
 		this.save.dex[f.mon[0]] = row;
 
-		if (f.boss) {
+		if (this.save.farm) {
+			// the counter still turns over so the dots keep moving, the stage does not
+			this.save.kills = (this.save.kills + 1) % KILLS_PER_STAGE;
+		} else if (f.boss) {
 			this.advance();
 		} else {
 			this.save.kills++;
@@ -387,6 +394,15 @@ class Game {
 		if (this.save.stage > this.save.highest) this.save.highest = this.save.stage;
 	}
 
+	// Hold this stage for as long as you like. Walk somewhere with the arrows,
+	// lock it, and the run stops advancing on its own.
+	toggleFarm() {
+		this.save.farm = !this.save.farm;
+		this.save.kills = 0;
+		this.spawn();
+		this.dirty = true;
+	}
+
 	// walking back is free, so a boss you cannot beat is not the end of a session
 	goBack() {
 		if (this.save.stage <= 1) return;
@@ -399,6 +415,10 @@ class Game {
 		this.save.stage++;
 		this.save.kills = 0;
 		this.spawn();
+	}
+
+	get farming(): boolean {
+		return !!this.save.farm;
 	}
 
 	// ---- spending --------------------------------------------------------

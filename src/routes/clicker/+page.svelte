@@ -2,16 +2,17 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { fade, fly, scale } from 'svelte/transition';
 	import { game, fmt, pretty, hpAt, isBossStage, PARTY, PERKS, ZONES } from '$lib/clicker/game.svelte';
-	import type { Upgrade } from '$lib/clicker/data';
-	import { sceneOf } from '$lib/clicker/data';
+	import { sceneOf, variantOf, HOURS, type Upgrade } from '$lib/clicker/data';
 	import { spriteOf, aniOf, typeColor } from '$lib/dexStore.svelte';
 	import { cloud } from '$lib/cloud.svelte';
 
 	type Tab = 'party' | 'shop' | 'perks' | 'dex' | 'board';
 	type Amount = 1 | 10 | 100 | 'max';
+	type ShopFilter = 'all' | 'ready' | 'party' | 'global';
 
 	let tab = $state<Tab>('party');
 	let buyAmt = $state<Amount>(1);
+	let shopFilter = $state<ShopFilter>('all');
 	let confirming = $state(false);
 	let broken = $state<Record<string, boolean>>({});
 
@@ -32,9 +33,14 @@
 	let zone = $derived(game.zone);
 	let accent = $derived(typeColor(zone.type));
 	let scene = $derived(sceneOf(zone.type));
+	let v = $derived(variantOf(game.save.stage));
+	let hour = $derived(HOURS[v.hour]);
+
 	let sceneVars = $derived(
 		`--sky1:${scene.sky1};--sky2:${scene.sky2};--far:${scene.far};--near:${scene.near};` +
-			`--ground:${scene.ground};--orb:${scene.orb};--glow:${scene.glow};--fleck:${scene.fleck}`
+			`--ground:${scene.ground};--orb:${scene.orb};--glow:${scene.glow};--fleck:${scene.fleck};` +
+			`--shFar:${v.far};--shMid:${v.mid};--shNear:${v.near};--wash:${hour.wash};` +
+			`--orbSize:${hour.orbSize}px;--orbTop:${hour.orbTop}%;--orbX:${v.orbX}%;--dim:${hour.dim}`
 	);
 
 	// Showdown has no animated sprite for every species, so a failed gif quietly
@@ -71,7 +77,6 @@
 		return m ? `${m}m ${s}s` : `${s}s`;
 	}
 
-	// every species the tour can throw at you, bosses included
 	let dexAll = $derived.by(() => {
 		const out: { id: number; name: string; boss: boolean }[] = [];
 		const seen = new Set<number>();
@@ -91,15 +96,29 @@
 
 	let nextStageHp = $derived(hpAt(game.save.stage + 1));
 
-	// what the shop can sell right now, cheapest first, and how many of those are
-	// actually within reach so the tab can badge itself
-	let shopList = $derived(game.shopList);
-	let affordableUps = $derived(shopList.filter((u) => game.save.gold >= u.cost).length);
+	let shopAll = $derived(game.shopList);
+	let shopReady = $derived(shopAll.filter((u) => game.save.gold >= u.cost));
+	let shopShown = $derived.by(() => {
+		if (shopFilter === 'ready') return shopReady;
+		if (shopFilter === 'party') return shopAll.filter((u) => u.member);
+		if (shopFilter === 'global') return shopAll.filter((u) => !u.member);
+		return shopAll;
+	});
 
-	function upOwner(u: Upgrade): string {
-		return u.member ? pretty(u.member) : 'Everyone';
+	function upIcon(u: Upgrade): number | null {
+		const m = PARTY.find((p) => p.key === u.member);
+		return m ? m.mon[0] : null;
 	}
-	const AMOUNTS: Amount[] = [1, 10, 100, 'max'];
+	function upType(u: Upgrade): string {
+		return PARTY.find((p) => p.key === u.member)?.type ?? 'normal';
+	}
+
+	const FILTERS: [ShopFilter, string][] = [
+		['all', 'All'],
+		['ready', 'Affordable'],
+		['party', 'Party'],
+		['global', 'Everyone']
+	];
 </script>
 
 <svelte:head><title>Pokemon Clicker</title></svelte:head>
@@ -114,30 +133,15 @@
 
 <div class="pcwrap" style="--acc:{accent}">
 	<header class="hud">
-		<a class="chip nav" href="/">‹ Binder</a>
+		<a class="pill nav" href="/">‹ Binder</a>
 
 		<div class="gauges">
-			<span class="gauge money">
-				<i>money</i>
-				<b>₽ {fmt(game.save.gold)}</b>
-			</span>
-			<span class="gauge dps">
-				<i>party dps</i>
-				<b>{fmt(game.dps)}</b>
-			</span>
-			<span class="gauge tap">
-				<i>per tap</i>
-				<b>{fmt(game.tapDamage)}</b>
-			</span>
-			<span class="gauge crit">
-				<i>crit</i>
-				<b>{Math.round(game.critChance * 100)}%</b>
-			</span>
+			<span class="gauge money"><i>money</i><b>₽ {fmt(game.save.gold)}</b></span>
+			<span class="gauge dps"><i>party dps</i><b>{fmt(game.dps)}</b></span>
+			<span class="gauge tap"><i>per tap</i><b>{fmt(game.tapDamage)}</b></span>
+			<span class="gauge crit"><i>crit</i><b>{Math.round(game.critChance * 100)}%</b></span>
 			{#if game.save.candy || game.save.rebirths}
-				<span class="gauge candy">
-					<i>candy</i>
-					<b>{fmt(game.save.candy)}</b>
-				</span>
+				<span class="gauge candy"><i>candy</i><b>{fmt(game.save.candy)}</b></span>
 			{/if}
 		</div>
 
@@ -150,116 +154,123 @@
 	</header>
 
 	<div class="pcgrid">
-		<section class="arena" style={sceneVars}>
-			<!-- the whole backdrop is drawn from the zone palette: sky, a glow, two
-			     silhouette ridges and a floor. No images, so switching zones costs
-			     nothing but a handful of custom properties. -->
-			<div class="scene" aria-hidden="true">
-				<span class="orb"></span>
-				<span class="ridge far"></span>
-				<span class="ridge near"></span>
-				<span class="floor"></span>
-				<span class="motes"></span>
-				<span class="vignette"></span>
-			</div>
-
-			<div class="stagebar">
-				<button class="navb" onclick={() => game.goBack()} disabled={game.save.stage <= 1}>‹</button>
-				<div class="stagemid">
-					<strong>{zone.name}</strong>
-					<span class="stagenum">
-						Stage <b>{game.save.stage}</b>
-						<i>best {game.save.highest}</i>
-					</span>
-					<!-- always rendered, hidden on boss stages: toggling it moved the
-					     whole arena every fifth stage and the page jumped -->
-					<span class="killdots" class:blank={isBossStage(game.save.stage)}>
-						{#each { length: 10 } as _, i}
-							<b class:done={i < game.save.kills}></b>
-						{/each}
-					</span>
+		<section class="arena">
+			<div class="screen" style={sceneVars}>
+				<!-- Sky, sun, three silhouette bands and a floor, all cut from the stage
+				     number, so every stage in a zone is its own place rather than the
+				     same picture in a different colour. -->
+				<div class="scene" aria-hidden="true" class:flipped={v.flip}>
+					<span class="orb"></span>
+					{#if hour.stars}<span class="stars"></span>{/if}
+					<span class="band far"></span>
+					<span class="band mid"></span>
+					<span class="band near"></span>
+					<span class="floor"></span>
+					<span class="motes"></span>
+					<span class="wash"></span>
+					<span class="vignette"></span>
 				</div>
-				<button class="navb" onclick={() => game.goForward()} disabled={game.save.stage >= game.save.highest}>›</button>
-			</div>
 
-			{#if foe}
-				<!-- svelte-ignore a11y_click_events_have_key_events -->
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div
-					class="foeBtn"
-					class:boss={foe.boss}
-					class:shiny={foe.shiny}
-					onclick={hitFoe}
-					role="button"
-					tabindex="0"
-				>
-					<span class="shadow"></span>
-					{#key foe.mon[1] + String(foe.shiny)}
-						<img
-							class="foeArt"
-							src={art(foe.mon[1], foe.mon[0], foe.shiny)}
-							alt={pretty(foe.mon[1])}
-							draggable="false"
-							onerror={() => (broken[foe.mon[1]] = true)}
-							in:scale={{ duration: 220, start: 0.75 }}
-						/>
-					{/key}
-
-					{#each game.hits as h (h.id)}
-						<span class="dmg" class:crit={h.crit} style="left:{h.x}%; top:{h.y}%">
-							{fmt(h.amount)}{h.crit ? '!' : ''}
+				<div class="topbar">
+					<button class="navb" onclick={() => game.goBack()} disabled={game.save.stage <= 1}>‹</button>
+					<div class="stagemid">
+						<strong>{zone.name}</strong>
+						<span class="stagenum">
+							Stage <b>{game.save.stage}</b><i>best {game.save.highest}</i>
 						</span>
-					{/each}
-				</div>
-
-				<div class="nameplate" class:bossplate={foe.boss}>
-					<span class="npname">
-						{#if foe.shiny}<em class="shinytag">✦</em>{/if}
-						{pretty(foe.mon[1])}
-					</span>
-					<span class="typetag" style="--t:{typeColor(foe.type)}">{foe.type}</span>
-					{#if foe.boss}<span class="bosstag">BOSS</span>{/if}
-				</div>
-
-				<div class="hpwrap">
-					<div class="hpbar" class:bosshp={foe.boss}>
-						<i style="width:{hpPct}%"></i>
-						<span class="hptext">{fmt(Math.max(0, foe.hp))} / {fmt(foe.maxHp)}</span>
+						<span class="killdots" class:blank={isBossStage(game.save.stage) && !game.farming}>
+							{#each { length: 10 } as _, i}
+								<b class:done={i < game.save.kills}></b>
+							{/each}
+						</span>
 					</div>
-					<div class="bosstimer" class:low={game.bossLeft < 8} class:blank={!foe.boss}>
-						<i style="width:{(game.bossLeft / 30) * 100}%"></i>
-						<span>{game.bossLeft.toFixed(1)}s</span>
-					</div>
+					<button class="navb" onclick={() => game.goForward()} disabled={game.save.stage >= game.save.highest}>›</button>
 				</div>
-			{/if}
 
-			<p class="hint">Tap the Pokémon or hold Space · next stage is {fmt(nextStageHp)} HP</p>
+				<button
+					class="farmb"
+					class:on={game.farming}
+					onclick={() => game.toggleFarm()}
+					title="Stay on this stage instead of moving on"
+				>
+					{game.farming ? '🔒 Farming' : '🔓 Advancing'}
+				</button>
+
+				{#if foe}
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="foeBtn" class:boss={foe.boss} class:shiny={foe.shiny} onclick={hitFoe} role="button" tabindex="0">
+						<span class="shadow"></span>
+						{#key foe.mon[1] + String(foe.shiny)}
+							<img
+								class="foeArt"
+								src={art(foe.mon[1], foe.mon[0], foe.shiny)}
+								alt={pretty(foe.mon[1])}
+								draggable="false"
+								onerror={() => (broken[foe.mon[1]] = true)}
+								in:scale={{ duration: 220, start: 0.75 }}
+							/>
+						{/key}
+						{#each game.hits as h (h.id)}
+							<span class="dmg" class:crit={h.crit} style="left:{h.x}%; top:{h.y}%">
+								{fmt(h.amount)}{h.crit ? '!' : ''}
+							</span>
+						{/each}
+					</div>
+
+					<div class="botbar">
+						<div class="nameplate" class:bossplate={foe.boss}>
+							<span class="npname">
+								{#if foe.shiny}<em class="shinytag">✦</em>{/if}{pretty(foe.mon[1])}
+							</span>
+							<span class="typetag" style="--t:{typeColor(foe.type)}">{foe.type}</span>
+							{#if foe.boss}<span class="bosstag">BOSS</span>{/if}
+						</div>
+						<div class="hpbar" class:bosshp={foe.boss}>
+							<i style="width:{hpPct}%"></i>
+							<span class="hptext">{fmt(Math.max(0, foe.hp))} / {fmt(foe.maxHp)}</span>
+						</div>
+						<div class="bosstimer" class:low={game.bossLeft < 8} class:blank={!foe.boss}>
+							<i style="width:{(game.bossLeft / 30) * 100}%"></i>
+							<span>{game.bossLeft.toFixed(1)}s</span>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<p class="hint">
+				{#if game.farming}
+					Locked on stage {game.save.stage}. Unlock to move on.
+				{:else}
+					Tap the Pokémon or hold Space · next stage is {fmt(nextStageHp)} HP
+				{/if}
+			</p>
 		</section>
 
 		<aside class="panel">
 			<div class="tabbar">
 				<button class:on={tab === 'party'} onclick={() => (tab = 'party')}>Party</button>
 				<button class:on={tab === 'shop'} onclick={() => (tab = 'shop')}>
-					Shop{#if affordableUps > 0}<i class="pip">{affordableUps}</i>{/if}
+					Shop{#if shopReady.length}<i class="pip">{shopReady.length}</i>{/if}
 				</button>
 				<button class:on={tab === 'perks'} onclick={() => (tab = 'perks')}>
 					Rebirth{#if game.candyGain > 0}<i class="pip">!</i>{/if}
 				</button>
 				<button class:on={tab === 'dex'} onclick={() => (tab = 'dex')}>Dex</button>
-				<button class:on={tab === 'board'} onclick={() => (tab = 'board')}>Board</button>
+				<button class:on={tab === 'board'} onclick={() => (tab = 'board')}>Rank</button>
 			</div>
 
 			{#if tab === 'party'}
-				<div class="amounts">
-					<span>Buy</span>
-					{#each AMOUNTS as n (n)}
-						<button class:on={buyAmt === n} onclick={() => (buyAmt = n)}>
+				<div class="chips">
+					<span class="chiplabel">Buy</span>
+					{#each [1, 10, 100, 'max'] as n (n)}
+						<button class:on={buyAmt === n} onclick={() => (buyAmt = n as Amount)}>
 							{n === 'max' ? 'MAX' : '×' + n}
 						</button>
 					{/each}
 				</div>
 
-				<button class="rowbtn tapup" onclick={() => game.buyTap()} disabled={game.save.gold < game.tapCost}>
+				<button class="row tapup" onclick={() => game.buyTap()} disabled={game.save.gold < game.tapCost}>
 					<span class="ricon glyph">👆</span>
 					<span class="rmid">
 						<b>Tap Power <u>lv {game.save.tapLevel}</u></b>
@@ -275,7 +286,7 @@
 					{@const locked = !lvl && i > 0 && !game.memberLevel(PARTY[i - 1].key)}
 					{#if !locked}
 						<button
-							class="rowbtn"
+							class="row"
 							class:owned={lvl > 0}
 							style="--t:{typeColor(m.type)}"
 							onclick={() => game.buyMember(m.key, Math.max(1, n))}
@@ -302,51 +313,62 @@
 					{/if}
 				{/each}
 			{:else if tab === 'shop'}
-				<p class="shopnote">
-					{game.shopOwned} owned · {shopList.length} on the shelf. Wiped by a rebirth, unlike perks.
-				</p>
-				{#each shopList.slice(0, 40) as u (u.key)}
+				<div class="chips">
+					{#each FILTERS as [k, name] (k)}
+						<button class:on={shopFilter === k} onclick={() => (shopFilter = k)}>
+							{name}
+							{#if k === 'ready' && shopReady.length}<em>{shopReady.length}</em>{/if}
+						</button>
+					{/each}
+				</div>
+				<p class="note">{game.shopOwned} bought · {shopAll.length} left · a rebirth clears them</p>
+
+				{#each shopShown.slice(0, 40) as u (u.key)}
+					{@const ready = game.save.gold >= u.cost}
 					<button
-						class="rowbtn shopitem"
-						class:member={!!u.member}
+						class="row shopitem"
+						class:ready
+						style="--t:{u.member ? typeColor(upType(u)) : '#f0b429'}"
 						onclick={() => game.buyUp(u.key)}
-						disabled={game.save.gold < u.cost}
+						disabled={!ready}
 					>
-						<span class="ricon glyph">{u.icon}</span>
+						<span class="ricon">
+							{#if upIcon(u)}
+								<img src={spriteOf(upIcon(u) ?? 1)} alt="" loading="lazy" />
+							{:else}
+								<span class="glyphbig">{u.icon}</span>
+							{/if}
+						</span>
 						<span class="rmid">
-							<b>{u.name}</b>
+							<b>{u.icon} {u.name}</b>
 							<i>{u.desc}</i>
 						</span>
-						<span class="rcost">
-							₽ {fmt(u.cost)}
-							<em class="owner">{upOwner(u)}</em>
-						</span>
+						<span class="rcost">₽ {fmt(u.cost)}</span>
 					</button>
 				{/each}
-				{#if !shopList.length}
-					<p class="shopnote">Sold out. Level the party up for more.</p>
+				{#if !shopShown.length}
+					<p class="note">Nothing here. Level the party up to stock the shelves.</p>
 				{/if}
 			{:else if tab === 'perks'}
 				<div class="rebirth">
 					<span class="rbtitle">Professor's Reset</span>
 					<p class="rbline">
-						Wipe the run, keep candy, perks and the Dex. Worth
-						<b>🍬 {fmt(game.candyGain)}</b> right now.
+						Wipe the run, keep candy, perks and the Dex. Worth <b>🍬 {fmt(game.candyGain)}</b> right now.
 					</p>
-					<p class="rbsmall">
-						Candy you are holding is itself <b>+{Math.round((game.candyBonus - 1) * 100)}%</b> damage,
-						so spending every last one is not always right. Rebirths: {game.save.rebirths}.
+					<p class="note">
+						Candy in hand is itself <b>+{Math.round((game.candyBonus - 1) * 100)}%</b> damage, so spending
+						every last one is not always right. Rebirths: {game.save.rebirths}.
 						{#if game.startGold > 0}Restarts with ₽ {fmt(game.startGold)}.{/if}
 					</p>
 					{#if confirming}
 						<div class="confirm">
-							<button class="chip go" onclick={() => { game.rebirth(); confirming = false; tab = 'party'; }}>
+							<button class="pill go" onclick={() => { game.rebirth(); confirming = false; tab = 'party'; }}>
 								Yes, reset
 							</button>
-							<button class="chip" onclick={() => (confirming = false)}>Cancel</button>
+							<button class="pill" onclick={() => (confirming = false)}>Cancel</button>
 						</div>
 					{:else}
-						<button class="chip go wide" onclick={() => (confirming = true)} disabled={game.candyGain <= 0}>
+						<button class="pill go wide" onclick={() => (confirming = true)} disabled={game.candyGain <= 0}>
 							{game.candyGain > 0 ? `Rebirth for ${fmt(game.candyGain)} candy` : 'Push further first'}
 						</button>
 					{/if}
@@ -356,7 +378,7 @@
 					{@const lvl = game.save.perks[p.key] ?? 0}
 					{@const cost = game.perkCost(p.key)}
 					<button
-						class="rowbtn perk"
+						class="row perk"
 						onclick={() => game.buyPerk(p.key)}
 						disabled={game.save.candy < cost || lvl >= p.max}
 					>
@@ -387,7 +409,7 @@
 					{/each}
 				</div>
 			{:else}
-				<p class="boardnote">Highest stage wins. Refreshes every half minute.</p>
+				<p class="note">Highest stage wins. Refreshes every half minute.</p>
 				<div class="boardlist">
 					{#each game.board as b, i (b.profile_name)}
 						<div class="brow" class:me={b.profile_name === cloud.profileName} class:first={i === 0}>
@@ -400,7 +422,7 @@
 						</div>
 					{/each}
 					{#if !game.board.length}
-						<p class="boardnote">Nothing here yet.</p>
+						<p class="note">Nothing here yet.</p>
 					{/if}
 				</div>
 			{/if}
@@ -411,241 +433,265 @@
 		<div class="modal" transition:fade={{ duration: 150 }}>
 			<div class="sheet" in:fly={{ y: 14, duration: 200 }}>
 				<h2>Your party kept working</h2>
-				<p>
-					Away for {label(game.offlineSeconds)}. They farmed <b>₽ {fmt(game.offlineGold)}</b>.
-				</p>
-				<p class="rbsmall">Offline rate is {Math.round(game.idleRate * 100)}%, capped at 12 hours.</p>
-				<button class="chip go" onclick={() => game.dismissOffline()}>Nice</button>
+				<p>Away for {label(game.offlineSeconds)}. They farmed <b>₽ {fmt(game.offlineGold)}</b>.</p>
+				<p class="note">Offline rate is {Math.round(game.idleRate * 100)}%, capped at 12 hours.</p>
+				<button class="pill go" onclick={() => game.dismissOffline()}>Nice</button>
 			</div>
 		</div>
 	{/if}
 
-	{#if game.error}
-		<p class="err">{game.error}</p>
-	{/if}
+	{#if game.error}<p class="err">{game.error}</p>{/if}
 </div>
 
 <style>
-	/* A deliberately different look from the rest of the app: chunky bevelled
-	   panels, hard edges and tabular numbers, so it reads as a game screen rather
-	   than another page of the binder. */
+	/* Pokedex furniture: cream panels with a hard navy outline and a chunky bottom
+	   edge, red for the frame, blue for what is selected. Deliberately nothing like
+	   the dark glass the rest of the app uses. */
 	.pcwrap {
+		--ink: #1c2b3a;
+		--cream: #fdfaf2;
+		--card: #ffffff;
+		--line: #22303f;
+		--red: #e3350d;
+		--blue: #2a75bb;
+		--sun: #ffcb05;
+		--muted: #6b7c8c;
+
 		min-height: 100dvh;
 		padding: 0.7rem clamp(0.5rem, 2vw, 1.4rem) 1.6rem;
-		color: #e2f1f5;
-		background:
-			radial-gradient(85% 55% at 50% -12%, color-mix(in srgb, var(--acc) 20%, transparent), transparent 72%),
-			radial-gradient(55% 45% at 100% 105%, rgba(0, 170, 175, 0.1), transparent 70%),
-			linear-gradient(180deg, #04121a, #072029 46%, #020a0f);
+		color: var(--ink);
+		font-family: ui-rounded, 'Segoe UI Rounded', 'Nunito', 'Trebuchet MS', system-ui, sans-serif;
 		font-variant-numeric: tabular-nums;
-	}
-	/* a very faint scanline, just enough to read as a screen rather than a page */
-	.pcwrap::after {
-		content: '';
-		position: fixed;
-		inset: 0;
-		z-index: 60;
-		pointer-events: none;
-		background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 3px);
+		background:
+			radial-gradient(90% 60% at 50% -15%, color-mix(in srgb, var(--acc) 45%, transparent), transparent 70%),
+			linear-gradient(180deg, #eaf2f7, #dce8f0 55%, #cfdde8);
 	}
 
-	/* ---- status bar ---- */
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.4rem 0.85rem;
+		border-radius: 999px;
+		border: 2px solid var(--line);
+		border-bottom-width: 4px;
+		background: var(--card);
+		color: var(--ink);
+		text-decoration: none;
+		font-size: 0.82rem;
+		font-weight: 800;
+		cursor: pointer;
+		transition: transform 0.07s;
+	}
+	.pill:active:not(:disabled) {
+		transform: translateY(2px);
+		border-bottom-width: 2px;
+	}
+	.pill:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+	.pill.go {
+		background: var(--red);
+		border-color: #8f1c06;
+		color: #fff;
+	}
+	.pill.wide {
+		width: 100%;
+	}
+
 	.hud {
 		display: flex;
-		align-items: stretch;
+		align-items: center;
 		gap: 0.5rem;
 		max-width: 1320px;
 		margin: 0 auto 0.7rem;
 		flex-wrap: wrap;
 	}
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.45rem 0.85rem;
-		border-radius: 10px;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-bottom-width: 3px;
-		background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
-		color: #c9e4ea;
-		text-decoration: none;
-		font-size: 0.82rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: transform 0.08s, border-color 0.15s;
-	}
-	.chip:hover:not(:disabled) {
-		border-color: var(--acc);
-	}
-	.chip:active:not(:disabled) {
-		transform: translateY(2px);
-		border-bottom-width: 1px;
-	}
-	.chip:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
-	.chip.go {
-		border-color: rgba(255, 190, 110, 0.75);
-		background: linear-gradient(180deg, #ffb457, #e07a2a);
-		color: #26150a;
-		text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
-	}
-	.chip.wide {
-		width: 100%;
-	}
-
 	.gauges {
 		display: flex;
 		flex: 1;
 		flex-wrap: wrap;
 		gap: 0.4rem;
 	}
-	/* each readout is its own lit segment, coloured by what it measures */
 	.gauge {
 		display: grid;
-		gap: 0.05rem;
-		padding: 0.3rem 0.8rem;
-		min-width: 92px;
-		border-radius: 10px;
-		border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
-		border-bottom-width: 3px;
-		background:
-			linear-gradient(180deg, color-mix(in srgb, var(--c) 16%, transparent), transparent),
-			rgba(3, 14, 20, 0.6);
+		gap: 0.02rem;
+		padding: 0.25rem 0.75rem;
+		min-width: 94px;
+		border-radius: 12px;
+		border: 2px solid var(--line);
+		border-bottom-width: 4px;
+		background: var(--card);
 	}
 	.gauge i {
 		font-style: normal;
-		font-size: 0.58rem;
-		letter-spacing: 0.16em;
+		font-size: 0.56rem;
+		font-weight: 800;
+		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: color-mix(in srgb, var(--c) 65%, #6f97a1);
+		color: var(--muted);
 	}
 	.gauge b {
 		font-size: 1rem;
-		line-height: 1.1;
+		line-height: 1.15;
 		color: var(--c);
-		text-shadow: 0 0 12px color-mix(in srgb, var(--c) 40%, transparent);
 	}
 	.money {
-		--c: #ffd066;
+		--c: #b8860b;
 	}
 	.dps {
-		--c: #5fe0c8;
+		--c: #0f8f7a;
 	}
 	.tap {
-		--c: #ff9f6b;
+		--c: #d2601a;
 	}
 	.crit {
-		--c: #ff6b8f;
+		--c: #c2185b;
 	}
 	.candy {
-		--c: #ff9ecb;
+		--c: #8e24aa;
 	}
 
 	.trainer {
 		display: grid;
-		align-content: center;
 		justify-items: end;
-		gap: 0.1rem;
-		padding: 0 0.3rem;
+		gap: 0.05rem;
 	}
 	.trainer b {
-		font-size: 0.86rem;
+		font-size: 0.88rem;
 	}
 	.sync {
 		font-style: normal;
-		font-size: 0.6rem;
+		font-size: 0.58rem;
+		font-weight: 800;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: #4d747d;
+		color: var(--muted);
 	}
 	.sync.on {
-		color: #86d7a2;
+		color: #1e8e4a;
 	}
 	.sync.bad {
-		color: #ff8a7a;
+		color: var(--red);
 	}
 
 	.pcgrid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(310px, 390px);
+		grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
 		gap: 0.8rem;
 		max-width: 1320px;
 		margin: 0 auto;
 		align-items: start;
 	}
-	@media (max-width: 940px) {
+	@media (max-width: 960px) {
 		.pcgrid {
 			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 
-	/* ---- the arena and its painted backdrop ---- */
-	/* Fixed rows and a floor under the height. Sprites vary wildly and the boss
-	   timer used to appear from nowhere every fifth stage, which shoved the whole
-	   page around. Nothing in here resizes any more. */
 	.arena {
+		display: grid;
+		gap: 0.5rem;
+		padding: 0.6rem;
+		border-radius: 20px;
+		border: 3px solid var(--line);
+		border-bottom-width: 6px;
+		background: var(--cream);
+	}
+	/* Fixed rows and a floor under the height: sprites vary wildly and the boss
+	   timer used to appear from nowhere every fifth stage, which shoved the page
+	   around. Nothing in here resizes any more. */
+	.screen {
 		position: relative;
 		display: grid;
-		grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+		grid-template-rows: auto auto minmax(0, 1fr) auto;
 		justify-items: center;
 		align-content: start;
-		min-height: 620px;
-		gap: 0.55rem;
-		padding: 0.9rem 0.9rem 1.1rem;
-		border-radius: 18px;
-		border: 2px solid rgba(255, 255, 255, 0.1);
+		gap: 0.45rem;
+		min-height: 560px;
+		padding: 0.7rem;
+		border-radius: 13px;
+		border: 3px solid var(--line);
 		overflow: hidden;
 		isolation: isolate;
 	}
+	.screen > *:not(.scene) {
+		position: relative;
+		z-index: 1;
+	}
+
 	.scene {
 		position: absolute;
 		inset: 0;
 		z-index: 0;
 		background: linear-gradient(180deg, var(--sky1), var(--sky2));
 	}
+	.scene.flipped {
+		transform: scaleX(-1);
+	}
 	.scene span {
 		position: absolute;
 		display: block;
 	}
 	.orb {
-		top: 12%;
-		right: 16%;
-		width: 74px;
-		height: 74px;
+		top: var(--orbTop);
+		left: var(--orbX);
+		width: var(--orbSize);
+		height: var(--orbSize);
 		border-radius: 50%;
 		background: var(--orb);
-		box-shadow: 0 0 70px 30px var(--glow);
-		opacity: 0.9;
+		box-shadow: 0 0 70px 26px var(--glow);
+		opacity: 0.92;
 	}
-	/* two ridges, the far one lighter and higher, which is enough to read as depth */
-	.ridge {
-		left: -10%;
-		width: 120%;
+	.stars {
+		inset: 0 0 45% 0;
+		background-image:
+			radial-gradient(1.5px 1.5px at 8% 22%, #fff, transparent),
+			radial-gradient(1.2px 1.2px at 21% 48%, #fff, transparent),
+			radial-gradient(1.6px 1.6px at 37% 15%, #fff, transparent),
+			radial-gradient(1.2px 1.2px at 52% 38%, #fff, transparent),
+			radial-gradient(1.5px 1.5px at 66% 20%, #fff, transparent),
+			radial-gradient(1.2px 1.2px at 79% 44%, #fff, transparent),
+			radial-gradient(1.6px 1.6px at 91% 26%, #fff, transparent),
+			radial-gradient(1.2px 1.2px at 14% 60%, #fff, transparent),
+			radial-gradient(1.4px 1.4px at 45% 58%, #fff, transparent),
+			radial-gradient(1.3px 1.3px at 72% 62%, #fff, transparent);
+		opacity: 0.85;
+		animation: pctwinkle 4s ease-in-out infinite;
+	}
+	/* three silhouette bands, each cut by a shape picked from the stage number */
+	.band {
+		left: -8%;
+		width: 116%;
+	}
+	.band.far {
+		bottom: 25%;
+		height: 48%;
 		background: var(--far);
-		clip-path: polygon(0 62%, 9% 40%, 18% 55%, 28% 28%, 38% 48%, 50% 22%, 61% 47%, 71% 32%, 82% 52%, 92% 38%, 100% 58%, 100% 100%, 0 100%);
+		opacity: 0.6;
+		clip-path: var(--shFar);
 	}
-	.ridge.far {
-		bottom: 26%;
-		height: 46%;
-		opacity: 0.75;
+	.band.mid {
+		bottom: 19%;
+		height: 42%;
+		background: var(--far);
+		opacity: 0.85;
+		clip-path: var(--shMid);
 	}
-	.ridge.near {
-		bottom: 18%;
-		height: 38%;
+	.band.near {
+		bottom: 16%;
+		height: 32%;
 		background: var(--near);
-		clip-path: polygon(0 70%, 12% 52%, 24% 66%, 35% 44%, 48% 62%, 58% 40%, 70% 60%, 84% 46%, 100% 66%, 100% 100%, 0 100%);
+		clip-path: var(--shNear);
 	}
 	.floor {
 		left: 0;
 		right: 0;
 		bottom: 0;
-		height: 22%;
+		height: 18%;
 		background: linear-gradient(180deg, var(--ground), color-mix(in srgb, var(--ground) 55%, #000));
 	}
-	/* drifting motes: snow in the ice path, embers in the volcano, sparks in the
-	   power plant, all the same two gradients tinted by the zone */
 	.motes {
 		inset: 0;
 		background-image:
@@ -655,94 +701,108 @@
 			radial-gradient(2px 2px at 76% 54%, var(--fleck), transparent),
 			radial-gradient(1.4px 1.4px at 90% 34%, var(--fleck), transparent),
 			radial-gradient(1.6px 1.6px at 22% 78%, var(--fleck), transparent);
-		opacity: 0.75;
+		opacity: 0.7;
 		animation: pcdrift 9s linear infinite;
+	}
+	/* the hour of the day, laid over whatever the zone painted */
+	.wash {
+		inset: 0;
+		background: var(--wash);
 	}
 	.vignette {
 		inset: 0;
-		background:
-			radial-gradient(75% 60% at 50% 45%, transparent 40%, rgba(2, 10, 15, 0.55)),
-			linear-gradient(180deg, rgba(2, 10, 15, 0.35), transparent 30%);
-	}
-	.arena > *:not(.scene) {
-		position: relative;
-		z-index: 1;
+		background: radial-gradient(78% 62% at 50% 45%, transparent 42%, rgba(6, 10, 20, calc(0.32 + var(--dim))));
 	}
 
-	.stagebar {
+	.topbar {
 		display: flex;
 		align-items: center;
-		gap: 0.7rem;
-		padding: 0.35rem 0.5rem;
+		gap: 0.6rem;
+		padding: 0.3rem 0.45rem;
 		border-radius: 12px;
-		background: rgba(3, 14, 20, 0.55);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		border: 2px solid var(--line);
+		background: rgba(253, 250, 242, 0.94);
 	}
 	.navb {
-		width: 1.9rem;
-		height: 1.9rem;
+		width: 1.8rem;
+		height: 1.8rem;
 		border-radius: 8px;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		background: rgba(255, 255, 255, 0.07);
-		color: #e2f1f5;
+		border: 2px solid var(--line);
+		background: var(--card);
+		color: var(--ink);
 		font-size: 1rem;
+		font-weight: 800;
 		line-height: 1;
 		cursor: pointer;
 	}
 	.navb:disabled {
-		opacity: 0.22;
+		opacity: 0.28;
 		cursor: default;
 	}
 	.stagemid {
 		display: grid;
 		justify-items: center;
-		gap: 0.1rem;
-		min-width: 210px;
+		gap: 0.08rem;
+		min-width: 208px;
 	}
 	.stagemid strong {
-		font-size: 0.98rem;
-		letter-spacing: 0.06em;
+		font-size: 0.92rem;
+		font-weight: 900;
+		letter-spacing: 0.05em;
 		text-transform: uppercase;
-		color: #fff;
-		text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 	}
 	.stagenum {
-		font-size: 0.72rem;
-		letter-spacing: 0.1em;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
 		text-transform: uppercase;
-		color: #a9ccd4;
+		color: var(--muted);
 	}
 	.stagenum b {
-		font-size: 0.95rem;
-		color: var(--acc);
+		font-size: 0.92rem;
+		color: var(--red);
 	}
 	.stagenum i {
 		font-style: normal;
 		margin-left: 0.4rem;
-		opacity: 0.6;
 	}
 	.killdots {
 		display: flex;
 		gap: 3px;
-		margin-top: 0.15rem;
 	}
 	.killdots.blank {
 		visibility: hidden;
 	}
 	.killdots b {
 		width: 13px;
-		height: 4px;
+		height: 5px;
 		border-radius: 2px;
-		background: rgba(255, 255, 255, 0.2);
+		border: 1px solid var(--line);
+		background: #fff;
 	}
 	.killdots b.done {
-		background: var(--acc);
-		box-shadow: 0 0 6px var(--acc);
+		background: var(--sun);
+	}
+
+	.farmb {
+		justify-self: end;
+		padding: 0.25rem 0.7rem;
+		border-radius: 999px;
+		border: 2px solid var(--line);
+		background: rgba(253, 250, 242, 0.94);
+		color: var(--ink);
+		font-size: 0.72rem;
+		font-weight: 800;
+		cursor: pointer;
+	}
+	.farmb.on {
+		background: var(--sun);
+		border-color: #8a6d00;
 	}
 
 	.foeBtn {
 		position: relative;
-		width: min(330px, 70vw);
+		width: min(320px, 68vw);
 		aspect-ratio: 1;
 		display: grid;
 		place-items: center;
@@ -754,33 +814,31 @@
 		transform: translateY(3px) scale(0.95);
 	}
 	.foeArt {
-		width: 72%;
-		height: 72%;
+		width: 70%;
+		height: 70%;
 		object-fit: contain;
 		image-rendering: pixelated;
-		filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.55));
+		filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.5));
 		transition: transform 0.08s ease;
 		pointer-events: none;
 		animation: pcbob 2.8s ease-in-out infinite;
 	}
-	/* an ellipse on the floor instead of a glowing ring, so the foe stands in the
-	   scene rather than floating in front of it */
 	.shadow {
 		position: absolute;
-		bottom: 12%;
-		width: 42%;
+		bottom: 13%;
+		width: 40%;
 		height: 7%;
 		border-radius: 50%;
-		background: rgba(0, 0, 0, 0.4);
+		background: rgba(0, 0, 0, 0.35);
 		filter: blur(5px);
 		pointer-events: none;
 	}
 	.foeBtn.boss .foeArt {
-		filter: drop-shadow(0 0 18px rgba(255, 90, 90, 0.7)) drop-shadow(0 10px 16px rgba(0, 0, 0, 0.6));
+		filter: drop-shadow(0 0 18px rgba(255, 90, 90, 0.75)) drop-shadow(0 10px 16px rgba(0, 0, 0, 0.5));
 		animation-duration: 1.4s;
 	}
 	.foeBtn.shiny .foeArt {
-		filter: drop-shadow(0 0 20px rgba(255, 224, 102, 0.85)) drop-shadow(0 10px 16px rgba(0, 0, 0, 0.6));
+		filter: drop-shadow(0 0 20px rgba(255, 224, 102, 0.9)) drop-shadow(0 10px 16px rgba(0, 0, 0, 0.5));
 	}
 
 	.dmg {
@@ -789,105 +847,111 @@
 		font-weight: 900;
 		font-size: 1.15rem;
 		color: #fff;
-		text-shadow: 0 0 6px rgba(0, 0, 0, 0.9), 0 2px 0 rgba(0, 0, 0, 0.6);
+		-webkit-text-stroke: 3px rgba(20, 28, 40, 0.9);
+		paint-order: stroke fill;
 		pointer-events: none;
 		animation: pcfloat 0.7s ease-out forwards;
 	}
 	.dmg.crit {
 		font-size: 1.8rem;
-		color: #ffd166;
+		color: var(--sun);
 	}
 
+	.botbar {
+		display: grid;
+		justify-items: center;
+		gap: 0.3rem;
+		width: min(440px, 96%);
+	}
 	.nameplate {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		min-width: 260px;
-		min-height: 2rem;
 		gap: 0.4rem;
-		padding: 0.3rem 0.8rem;
+		min-width: 250px;
+		min-height: 1.9rem;
+		padding: 0.2rem 0.8rem;
 		border-radius: 999px;
-		background: rgba(3, 14, 20, 0.72);
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		border: 2px solid var(--line);
+		background: rgba(253, 250, 242, 0.95);
 	}
 	.nameplate.bossplate {
-		border-color: rgba(255, 90, 90, 0.6);
+		border-color: var(--red);
 	}
 	.npname {
-		font-size: 0.95rem;
-		font-weight: 700;
+		font-size: 0.92rem;
+		font-weight: 900;
 	}
 	.typetag {
-		padding: 0.08rem 0.5rem;
+		padding: 0.06rem 0.5rem;
 		border-radius: 999px;
-		font-size: 0.6rem;
-		font-weight: 700;
-		letter-spacing: 0.12em;
+		border: 1px solid rgba(0, 0, 0, 0.25);
+		font-size: 0.58rem;
+		font-weight: 900;
+		letter-spacing: 0.1em;
 		text-transform: uppercase;
-		background: color-mix(in srgb, var(--t) 30%, transparent);
-		color: var(--t);
+		background: var(--t);
+		color: #fff;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 	}
 	.bosstag {
-		padding: 0.08rem 0.5rem;
+		padding: 0.06rem 0.5rem;
 		border-radius: 999px;
-		font-size: 0.6rem;
-		font-weight: 800;
-		letter-spacing: 0.14em;
-		background: #d8443f;
+		font-size: 0.58rem;
+		font-weight: 900;
+		letter-spacing: 0.12em;
+		background: var(--red);
 		color: #fff;
 	}
 	.shinytag {
 		font-style: normal;
-		color: #ffe066;
+		margin-right: 0.2rem;
+		color: #c8a200;
 	}
 
-	.hpwrap {
-		display: grid;
-		gap: 0.3rem;
-		width: min(430px, 92%);
-	}
 	.hpbar {
 		position: relative;
-		height: 20px;
-		border-radius: 6px;
-		border: 2px solid rgba(0, 0, 0, 0.55);
-		background: rgba(0, 0, 0, 0.5);
+		width: 100%;
+		height: 19px;
+		border-radius: 999px;
+		border: 2px solid var(--line);
+		background: #fdfaf2;
 		overflow: hidden;
-		box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
 	}
 	.hpbar i {
 		display: block;
 		height: 100%;
-		background: linear-gradient(180deg, #7ee08a, #34a04a 55%, #2a8440);
+		background: linear-gradient(180deg, #7ee08a, #2f9c46);
 		transition: width 0.1s linear;
 	}
 	.hpbar.bosshp i {
-		background: linear-gradient(180deg, #ff8a7a, #d8443f 55%, #a92e2b);
+		background: linear-gradient(180deg, #ff8a7a, #d8443f);
 	}
 	.hptext {
 		position: absolute;
 		inset: 0;
 		display: grid;
 		place-items: center;
-		font-size: 0.7rem;
-		font-weight: 700;
-		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+		font-size: 0.68rem;
+		font-weight: 800;
+		color: var(--ink);
+	}
+	.bosstimer {
+		position: relative;
+		width: 100%;
+		height: 14px;
+		border-radius: 999px;
+		border: 2px solid var(--line);
+		background: #fdfaf2;
+		overflow: hidden;
 	}
 	.bosstimer.blank {
 		visibility: hidden;
 	}
-	.bosstimer {
-		position: relative;
-		height: 15px;
-		border-radius: 6px;
-		border: 2px solid rgba(0, 0, 0, 0.5);
-		background: rgba(0, 0, 0, 0.5);
-		overflow: hidden;
-	}
 	.bosstimer i {
 		display: block;
 		height: 100%;
-		background: linear-gradient(180deg, #63dced, #2fa2b8);
+		background: linear-gradient(180deg, #6fc0ff, var(--blue));
 		transition: width 0.1s linear;
 	}
 	.bosstimer.low i {
@@ -898,32 +962,31 @@
 		inset: 0;
 		display: grid;
 		place-items: center;
-		font-size: 0.63rem;
-		font-weight: 700;
-		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+		font-size: 0.6rem;
+		font-weight: 800;
 	}
 
 	.hint {
 		margin: 0;
 		min-height: 1.05rem;
-		font-size: 0.72rem;
-		color: #bcd9e1;
-		text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+		text-align: center;
+		font-size: 0.74rem;
+		font-weight: 600;
+		color: var(--muted);
 	}
 
-	/* ---- side panel ---- */
 	.panel {
 		display: grid;
 		gap: 0.35rem;
 		align-content: start;
 		max-height: calc(100dvh - 5rem);
 		overflow-y: auto;
-		/* reserve the scrollbar so switching tabs never changes the column width */
 		scrollbar-gutter: stable;
 		padding: 0.5rem;
-		border-radius: 16px;
-		border: 2px solid rgba(255, 255, 255, 0.09);
-		background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
+		border-radius: 20px;
+		border: 3px solid var(--line);
+		border-bottom-width: 6px;
+		background: var(--cream);
 	}
 	.tabbar {
 		display: flex;
@@ -931,10 +994,10 @@
 		position: sticky;
 		top: -0.5rem;
 		z-index: 2;
-		padding: 3px;
+		padding: 4px;
 		margin: -0.5rem -0.5rem 0.2rem;
-		border-radius: 12px;
-		background: #072029;
+		border-radius: 14px;
+		background: var(--red);
 	}
 	.tabbar button {
 		flex: 1;
@@ -943,118 +1006,137 @@
 		align-items: center;
 		justify-content: center;
 		gap: 0.2rem;
-		padding: 0.45rem 0.15rem;
-		border: 0;
-		border-radius: 9px;
-		background: rgba(255, 255, 255, 0.04);
-		color: #7fa4ae;
+		padding: 0.4rem 0.15rem;
+		border: 2px solid transparent;
+		border-radius: 10px;
+		background: rgba(255, 255, 255, 0.22);
+		color: #fff;
 		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0.01em;
+		font-weight: 800;
 		cursor: pointer;
 	}
 	.tabbar button.on {
-		background: linear-gradient(180deg, color-mix(in srgb, var(--acc) 55%, #fff 8%), var(--acc));
-		color: #03181f;
+		background: var(--card);
+		border-color: var(--line);
+		color: var(--ink);
 	}
 	.pip {
 		font-style: normal;
-		width: 14px;
-		height: 14px;
+		min-width: 15px;
+		height: 15px;
+		padding: 0 3px;
 		display: grid;
 		place-items: center;
-		border-radius: 50%;
-		background: #ff5a8a;
-		color: #fff;
+		border-radius: 999px;
+		background: var(--sun);
+		color: #4a3800;
 		font-size: 0.6rem;
+		font-weight: 900;
 	}
 
-	.amounts {
+	.chips {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.25rem;
-		font-size: 0.68rem;
+	}
+	.chiplabel {
+		font-size: 0.64rem;
+		font-weight: 800;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		color: #749ea9;
+		color: var(--muted);
 	}
-	.amounts button {
-		padding: 0.22rem 0.5rem;
-		border-radius: 7px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.04);
-		color: #bcd9e1;
+	.chips button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.22rem 0.6rem;
+		border-radius: 999px;
+		border: 2px solid var(--line);
+		background: var(--card);
+		color: var(--ink);
 		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0;
+		font-weight: 800;
 		cursor: pointer;
 	}
-	.amounts button.on {
-		border-color: var(--acc);
-		background: color-mix(in srgb, var(--acc) 30%, transparent);
+	.chips button.on {
+		background: var(--blue);
+		border-color: #17527f;
 		color: #fff;
 	}
+	.chips em {
+		font-style: normal;
+		padding: 0 0.3rem;
+		border-radius: 999px;
+		background: var(--sun);
+		color: #4a3800;
+		font-size: 0.62rem;
+	}
 
-	.rowbtn {
+	.row {
 		display: grid;
-		grid-template-columns: 42px minmax(0, 1fr) auto;
+		grid-template-columns: 40px minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 0.55rem;
-		padding: 0.4rem 0.65rem 0.4rem 0.4rem;
-		border-radius: 11px;
-		border: 1px solid rgba(255, 255, 255, 0.09);
-		border-left: 3px solid color-mix(in srgb, var(--t, #2fa2b8) 55%, transparent);
-		background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-		color: inherit;
+		gap: 0.5rem;
+		padding: 0.35rem 0.6rem 0.35rem 0.35rem;
+		border-radius: 13px;
+		border: 2px solid var(--line);
+		border-left-width: 7px;
+		border-left-color: var(--t, var(--blue));
+		background: var(--card);
+		color: var(--ink);
 		text-align: left;
 		cursor: pointer;
-		transition: transform 0.08s, border-color 0.15s, background 0.15s;
+		transition:
+			transform 0.07s,
+			background 0.12s;
 	}
-	.rowbtn:hover:not(:disabled) {
-		border-color: var(--t, var(--acc));
-		background: rgba(255, 255, 255, 0.08);
+	.row:hover:not(:disabled) {
+		background: #f3f8fd;
 	}
-	.rowbtn:active:not(:disabled) {
+	.row:active:not(:disabled) {
 		transform: translateY(1px);
 	}
-	.rowbtn:disabled {
-		opacity: 0.38;
+	.row:disabled {
+		opacity: 0.42;
 		cursor: default;
 	}
-	.rowbtn.owned {
-		background: linear-gradient(
-			90deg,
-			color-mix(in srgb, var(--t) 14%, transparent),
-			rgba(255, 255, 255, 0.02) 45%
-		);
+	.row.owned {
+		background: linear-gradient(90deg, color-mix(in srgb, var(--t) 18%, #fff), #fff 55%);
+	}
+	.row.shopitem.ready {
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--sun) 70%, transparent);
 	}
 	.ricon {
 		display: grid;
 		place-items: center;
-		width: 42px;
-		height: 42px;
+		width: 40px;
+		height: 40px;
 	}
 	.ricon img {
 		width: 100%;
 		image-rendering: pixelated;
 	}
-	.ricon.glyph {
+	.ricon.glyph,
+	.glyphbig {
 		font-size: 1.35rem;
 	}
 	.rmid {
 		display: grid;
-		gap: 0.08rem;
+		gap: 0.05rem;
 		min-width: 0;
 	}
 	.rmid b {
-		font-size: 0.84rem;
+		font-size: 0.83rem;
+		font-weight: 800;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 	.rmid u {
 		text-decoration: none;
-		color: var(--t, var(--acc));
+		color: var(--blue);
 		font-size: 0.74rem;
 	}
 	.plus {
@@ -1062,107 +1144,89 @@
 		margin-left: 0.3rem;
 		padding: 0.02rem 0.32rem;
 		border-radius: 5px;
-		background: #3fae6a;
-		color: #04180c;
+		background: #2f9c46;
+		color: #fff;
 		font-size: 0.66rem;
-		font-weight: 800;
+		font-weight: 900;
 	}
 	.rmid i {
 		font-style: normal;
 		font-size: 0.7rem;
-		color: #7ba4ae;
+		color: var(--muted);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 	.rcost {
-		font-size: 0.76rem;
-		font-weight: 700;
-		color: #ffd066;
+		font-size: 0.78rem;
+		font-weight: 900;
+		color: #a06a00;
 		white-space: nowrap;
 	}
 	.candycost {
-		color: #ff9ecb;
+		color: #8e24aa;
 	}
 	.tapup {
-		border-left-color: #ff9f6b;
+		border-left-color: #d2601a;
 	}
 	.perk {
-		border-left-color: #ff9ecb;
-	}
-	.shopitem {
-		border-left-color: #ffd066;
-	}
-	.shopitem.member {
-		border-left-color: #5fe0c8;
-	}
-	.shopnote {
-		margin: 0.15rem 0;
-		font-size: 0.7rem;
-		color: #749ea9;
-	}
-	.owner {
-		display: block;
-		font-style: normal;
-		font-size: 0.62rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: #6f97a1;
-		text-align: right;
+		border-left-color: #8e24aa;
 	}
 
 	.rebirth {
 		display: grid;
-		gap: 0.4rem;
+		gap: 0.35rem;
 		padding: 0.7rem;
-		border-radius: 13px;
-		border: 1px solid rgba(255, 158, 203, 0.35);
-		background: linear-gradient(180deg, rgba(255, 158, 203, 0.13), rgba(255, 158, 203, 0.04));
+		border-radius: 14px;
+		border: 2px solid #8e24aa;
+		background: #f9effc;
 	}
 	.rbtitle {
-		font-size: 0.66rem;
-		font-weight: 800;
+		font-size: 0.64rem;
+		font-weight: 900;
 		letter-spacing: 0.16em;
 		text-transform: uppercase;
-		color: #ff9ecb;
+		color: #8e24aa;
 	}
 	.rbline {
 		margin: 0;
 		font-size: 0.84rem;
+		font-weight: 600;
 	}
 	.rbline b {
-		color: #ffc8e2;
-	}
-	.rbsmall {
-		margin: 0;
-		font-size: 0.72rem;
-		color: #7ba4ae;
-	}
-	.rbsmall b {
-		color: #c9e4ea;
+		color: #8e24aa;
 	}
 	.confirm {
 		display: flex;
 		gap: 0.35rem;
 	}
+	.note {
+		margin: 0.1rem 0;
+		font-size: 0.71rem;
+		font-weight: 600;
+		color: var(--muted);
+	}
+	.note b {
+		color: var(--ink);
+	}
 
 	.dexhead {
 		display: flex;
-		gap: 0.4rem;
-		font-size: 0.68rem;
+		gap: 0.5rem;
+		font-size: 0.64rem;
+		font-weight: 800;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
-		color: #749ea9;
+		color: var(--muted);
 	}
 	.dexhead b {
-		font-size: 0.85rem;
+		font-size: 0.86rem;
 		letter-spacing: 0;
-		color: #e2f1f5;
+		color: var(--ink);
 	}
 	.dexgrid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
 		gap: 3px;
 	}
 	.dexcell {
@@ -1170,46 +1234,41 @@
 		aspect-ratio: 1;
 		display: grid;
 		place-items: center;
-		border-radius: 8px;
-		border: 1px solid rgba(255, 255, 255, 0.05);
-		background: rgba(0, 0, 0, 0.25);
+		border-radius: 9px;
+		border: 2px solid #d4dee7;
+		background: #eef4f9;
 	}
 	.dexcell img {
 		width: 92%;
 		image-rendering: pixelated;
-		filter: brightness(0) opacity(0.3);
+		filter: brightness(0) opacity(0.22);
 	}
 	.dexcell.got {
-		background: rgba(255, 255, 255, 0.05);
-		border-color: rgba(255, 255, 255, 0.12);
+		border-color: var(--line);
+		background: var(--card);
 	}
 	.dexcell.got img {
 		filter: none;
 	}
 	.dexcell.bossmon {
-		border-color: rgba(255, 90, 90, 0.3);
+		border-color: var(--red);
 	}
 	.dexn {
 		position: absolute;
 		right: 2px;
 		bottom: 0;
 		font-size: 0.58rem;
-		font-weight: 700;
-		text-shadow: 0 1px 3px #000;
+		font-weight: 900;
+		color: var(--ink);
 	}
 	.dexs {
 		position: absolute;
 		left: 2px;
 		top: 0;
 		font-size: 0.6rem;
-		color: #ffe066;
+		color: #c8a200;
 	}
 
-	.boardnote {
-		margin: 0.2rem 0;
-		font-size: 0.72rem;
-		color: #749ea9;
-	}
 	.boardlist {
 		display: grid;
 		gap: 0.3rem;
@@ -1220,24 +1279,24 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.4rem 0.6rem;
-		border-radius: 11px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.03);
+		border-radius: 12px;
+		border: 2px solid var(--line);
+		background: var(--card);
 	}
 	.brow.first {
-		border-color: rgba(255, 208, 102, 0.45);
-		background: rgba(255, 208, 102, 0.09);
+		background: #fff8dd;
+		border-color: #b58900;
 	}
 	.brow.me {
-		border-color: var(--acc);
+		border-color: var(--blue);
 	}
 	.bpos {
-		font-weight: 800;
-		color: #749ea9;
+		font-weight: 900;
+		color: var(--muted);
 	}
 	.bname {
 		display: grid;
-		gap: 0.05rem;
+		gap: 0.02rem;
 		min-width: 0;
 	}
 	.bname b {
@@ -1249,7 +1308,7 @@
 	.bname i {
 		font-style: normal;
 		font-size: 0.66rem;
-		color: #749ea9;
+		color: var(--muted);
 	}
 	.bstage {
 		display: grid;
@@ -1257,14 +1316,15 @@
 	}
 	.bstage b {
 		font-size: 1.05rem;
-		color: #ffd066;
+		color: var(--red);
 	}
 	.bstage i {
 		font-style: normal;
-		font-size: 0.58rem;
-		letter-spacing: 0.14em;
+		font-size: 0.56rem;
+		font-weight: 800;
+		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		color: #749ea9;
+		color: var(--muted);
 	}
 
 	.modal {
@@ -1274,18 +1334,19 @@
 		display: grid;
 		place-items: center;
 		padding: 1rem;
-		background: rgba(2, 10, 15, 0.85);
+		background: rgba(20, 30, 40, 0.6);
 	}
 	.sheet {
 		display: grid;
-		gap: 0.55rem;
+		gap: 0.5rem;
 		justify-items: center;
 		text-align: center;
 		width: min(420px, 92vw);
-		padding: 1.4rem;
-		border-radius: 16px;
-		border: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
-		background: #072029;
+		padding: 1.3rem;
+		border-radius: 20px;
+		border: 3px solid var(--line);
+		border-bottom-width: 6px;
+		background: var(--cream);
 	}
 	.sheet h2 {
 		margin: 0;
@@ -1296,14 +1357,15 @@
 		font-size: 0.86rem;
 	}
 	.sheet b {
-		color: #ffd066;
+		color: #a06a00;
 	}
 
 	.err {
 		max-width: 1320px;
 		margin: 0.7rem auto 0;
-		font-size: 0.74rem;
-		color: #ff8a7a;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--red);
 	}
 
 	@keyframes pcbob {
@@ -1315,17 +1377,26 @@
 			transform: translateY(-7px);
 		}
 	}
+	@keyframes pctwinkle {
+		0%,
+		100% {
+			opacity: 0.55;
+		}
+		50% {
+			opacity: 0.95;
+		}
+	}
 	@keyframes pcdrift {
 		0% {
 			transform: translate3d(0, 0, 0);
-			opacity: 0.3;
+			opacity: 0.25;
 		}
 		50% {
-			opacity: 0.8;
+			opacity: 0.75;
 		}
 		100% {
 			transform: translate3d(-14px, 22px, 0);
-			opacity: 0.3;
+			opacity: 0.25;
 		}
 	}
 	@keyframes pcfloat {
