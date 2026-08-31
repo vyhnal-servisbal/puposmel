@@ -31,6 +31,7 @@ export interface Save {
 	ups: Record<string, 1>;
 	farm: boolean;
 	candy: number;
+	earned: number;
 	perks: Record<string, number>;
 	rebirths: number;
 	dex: Record<number, DexRow>;
@@ -60,6 +61,7 @@ function emptySave(): Save {
 		ups: {},
 		farm: false,
 		candy: 0,
+		earned: 0,
 		perks: {},
 		rebirths: 0,
 		dex: {},
@@ -140,6 +142,7 @@ class Game {
 	private cloudTimer: ReturnType<typeof setInterval> | undefined;
 	private boardTimer: ReturnType<typeof setInterval> | undefined;
 	private hitId = 0;
+	private autoAcc = 0;
 	private dirty = false;
 	private rng = Math.random;
 
@@ -181,7 +184,18 @@ class Game {
 		return Math.min(0.75, 0.05 + (this.save.perks.crit ?? 0) * 0.03 + this.shopSum('crit'));
 	}
 	get critMult(): number {
-		return 5;
+		return 5 + (this.save.perks.critdmg ?? 0);
+	}
+	// cheaper levels are the strongest thing candy can buy, so this one is capped
+	// hard and priced high
+	get costGrowth(): number {
+		return Math.max(1.04, 1.07 - (this.save.perks.bargain ?? 0) * 0.0015);
+	}
+	get autoTaps(): number {
+		return this.save.perks.auto ?? 0;
+	}
+	get shinyOdds(): number {
+		return SHINY_ODDS / (1 + (this.save.perks.shiny ?? 0) * 0.15);
 	}
 	get idleRate(): number {
 		return Math.min(1, 0.35 + (this.save.perks.idle ?? 0) * 0.08);
@@ -211,7 +225,11 @@ class Game {
 		const lvl = this.memberLevel(key);
 		if (!m || !lvl) return 0;
 		const type = this.foe?.type ?? this.zone.type;
-		return m.dps * lvl * this.memberMult(key) * this.powerBonus * effect(m.type, type);
+		// Type Master widens the reward for a matching type without touching the
+		// penalty, so it is a bonus for building well, never a tax for building badly
+		const raw = effect(m.type, type);
+		const e = raw > 1 ? raw + (this.save.perks.stab ?? 0) * 0.05 : raw;
+		return m.dps * lvl * this.memberMult(key) * this.powerBonus * e;
 	}
 
 	get dps(): number {
@@ -235,7 +253,7 @@ class Game {
 	memberCost(key: string, count = 1): number {
 		const m = PARTY.find((p) => p.key === key);
 		if (!m || count < 1) return Infinity;
-		const k = 1.07;
+		const k = this.costGrowth;
 		const first = m.cost * Math.pow(k, this.memberLevel(key));
 		return (first * (Math.pow(k, count) - 1)) / (k - 1);
 	}
@@ -259,16 +277,12 @@ class Game {
 		const c = Math.floor(Math.pow(2, (highest - 35) / 14));
 		return isFinite(c) ? c : 0;
 	}
-	get candyGain(): number {
-		return Math.max(0, this.candyFor(this.save.highest) - this.lifetimeCandy);
+	get jarBonus(): number {
+		return 1 + (this.save.perks.jar ?? 0) * 0.05;
 	}
-	get lifetimeCandy(): number {
-		let spent = 0;
-		for (const p of PERKS) {
-			const lvl = this.save.perks[p.key] ?? 0;
-			for (let i = 0; i < lvl; i++) spent += Math.ceil(p.base * Math.pow(1.35, i));
-		}
-		return this.save.candy + spent;
+	get candyGain(): number {
+		const raw = Math.max(0, this.candyFor(this.save.highest) - this.save.earned);
+		return Math.floor(raw * this.jarBonus);
 	}
 
 	get dexCount(): number {
@@ -305,6 +319,16 @@ class Game {
 		const dt = TICK / 1000;
 		this.save.playtime += dt;
 
+		const auto = this.autoTaps;
+		if (auto > 0) {
+			this.autoAcc += auto * dt;
+			while (this.autoAcc >= 1) {
+				this.autoAcc -= 1;
+				this.tap(38 + Math.random() * 24, 34 + Math.random() * 24);
+			}
+			if (!this.foe) return;
+		}
+
 		const dmg = this.dps * dt;
 		if (dmg > 0) {
 			f.hp -= dmg;
@@ -336,7 +360,7 @@ class Game {
 		// even a boss stage sends wild ones.
 		const boss = isBossStage(stage) && !this.save.farm;
 		const mon = boss ? zone.boss : zone.mons[Math.floor(this.rng() * zone.mons.length)];
-		const shiny = this.rng() * SHINY_ODDS < 1;
+		const shiny = this.rng() * this.shinyOdds < 1;
 		const maxHp = hpAt(stage) * (boss ? 10 : 1);
 		this.foe = { mon, type: zone.type, boss, shiny, maxHp, hp: maxHp };
 		this.bossLeft = boss ? BOSS_SECONDS : 0;
@@ -366,7 +390,7 @@ class Game {
 		const stage = this.save.stage;
 
 		let gold = goldAt(stage) * this.goldBonus;
-		if (f.boss) gold *= 15;
+		if (f.boss) gold *= 15 * (1 + (this.save.perks.bossgold ?? 0) * 0.25);
 		if (f.shiny) gold *= 3;
 		this.save.gold += gold;
 
@@ -440,7 +464,7 @@ class Game {
 	affordable(key: string, cap = 1000): number {
 		const m = PARTY.find((p) => p.key === key);
 		if (!m) return 0;
-		const k = 1.07;
+		const k = this.costGrowth;
 		const first = m.cost * Math.pow(k, this.memberLevel(key));
 		if (!isFinite(first) || first <= 0) return 0;
 		const n = Math.log((this.save.gold * (k - 1)) / first + 1) / Math.log(k);
@@ -498,6 +522,7 @@ class Game {
 		const gain = this.candyGain;
 		if (gain <= 0) return;
 		this.save.candy += gain;
+		this.save.earned = this.candyFor(this.save.highest);
 		this.save.rebirths++;
 		this.save.party = {};
 		this.save.ups = {};
@@ -560,6 +585,17 @@ class Game {
 			pick = remote;
 		}
 		this.save = pick ?? emptySave();
+
+		// saves from before the ledger existed: rebuild it from what has been spent,
+		// otherwise the first rebirth would pay out everything all over again
+		if (!this.save.earned) {
+			let spent = 0;
+			for (const p of PERKS) {
+				const lvl = this.save.perks[p.key] ?? 0;
+				for (let i = 0; i < lvl; i++) spent += Math.ceil(p.base * Math.pow(1.35, i));
+			}
+			this.save.earned = this.save.candy + spent;
+		}
 
 		this.claimOffline();
 		this.loaded = true;

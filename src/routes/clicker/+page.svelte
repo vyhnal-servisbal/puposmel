@@ -2,7 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
 	import { game, fmt, pretty, hpAt, isBossStage, PARTY, PERKS, ZONES } from '$lib/clicker/game.svelte';
-	import { sceneOf, variantOf, HOURS, type Upgrade } from '$lib/clicker/data';
+	import { sceneOf, variantOf, itemSprite, HOURS, ROOF_SHAPE, type Member, type Upgrade } from '$lib/clicker/data';
 	import { spriteOf, aniOf, typeColor } from '$lib/dexStore.svelte';
 	import { cloud } from '$lib/cloud.svelte';
 
@@ -106,12 +106,12 @@
 		return shopAll;
 	});
 
-	function upIcon(u: Upgrade): number | null {
-		const m = PARTY.find((p) => p.key === u.member);
-		return m ? m.mon[0] : null;
+	function memberArt(m: Member): string {
+		return m.item ? itemSprite(m.item) : spriteOf(m.mon?.[0] ?? 1);
 	}
 	function upType(u: Upgrade): string {
-		return PARTY.find((p) => p.key === u.member)?.type ?? 'normal';
+		const t = PARTY.find((p) => p.key === u.member)?.type ?? 'none';
+		return t === 'none' ? '#f0b429' : typeColor(t);
 	}
 
 	// the shelf is sorted cheapest first, so a cap hides only what you cannot buy
@@ -169,6 +169,8 @@
 					<span class="band far"></span>
 					<span class="band mid"></span>
 					<span class="band near"></span>
+					{#if scene.roof}<span class="roof" style="clip-path:{ROOF_SHAPE}"></span>{/if}
+					<span class="haze"></span>
 					<span class="floor"></span>
 					<span class="motes"></span>
 					<span class="wash"></span>
@@ -290,14 +292,16 @@
 						<button
 							class="row"
 							class:owned={lvl > 0}
-							style="--t:{typeColor(m.type)}"
+							style="--t:{m.type === 'none' ? '#f0b429' : typeColor(m.type)}"
 							onclick={() => game.buyMember(m.key, Math.max(1, n))}
 							disabled={n < 1}
 						>
-							<span class="ricon"><img src={spriteOf(m.mon[0])} alt="" loading="lazy" /></span>
+							<span class="ricon" class:gear={!!m.item}>
+								<img src={memberArt(m)} alt="" loading="lazy" />
+							</span>
 							<span class="rmid">
 								<b>
-									{pretty(m.mon[1])}
+									{m.label}
 									{#if lvl}<u>lv {lvl}</u>{/if}
 									{#if n > 1}<em class="plus">+{n}</em>{/if}
 								</b>
@@ -305,6 +309,8 @@
 									{#if lvl}
 										{fmt(game.memberDps(m.key))} dps{#if game.memberMult(m.key) > 1}
 											· ×{game.memberMult(m.key)} items{/if}
+									{:else if m.item}
+										buy · gear, neutral everywhere
 									{:else}
 										recruit · {m.type} type
 									{/if}
@@ -332,19 +338,13 @@
 					<button
 						class="row shopitem"
 						class:ready
-						style="--t:{u.member ? typeColor(upType(u)) : '#f0b429'}"
+						style="--t:{u.member ? upType(u) : '#f0b429'}"
 						onclick={() => game.buyUp(u.key)}
 						disabled={!ready}
 					>
-						<span class="ricon">
-							{#if upIcon(u)}
-								<img src={spriteOf(upIcon(u) ?? 1)} alt="" loading="lazy" />
-							{:else}
-								<span class="glyphbig">{u.icon}</span>
-							{/if}
-						</span>
+						<span class="ricon gear"><img src={itemSprite(u.sprite)} alt="" loading="lazy" /></span>
 						<span class="rmid">
-							<b>{u.icon} {u.name}</b>
+							<b>{u.name}</b>
 							<i>{u.desc}</i>
 						</span>
 						<span class="rcost">₽ {fmt(u.cost)}</span>
@@ -684,30 +684,57 @@
 	   distance, the middle one is the zone colour, the near one is darker. Before
 	   this the far and middle bands were the same colour at two opacities and the
 	   whole thing looked like one flat shape. */
+	/* Aerial perspective plus a gradient inside each band. Flat fills at three
+	   opacities read as cut paper; a lighter top edge on every ridge is what makes
+	   them look like they are behind one another. */
 	.band.far {
 		bottom: 25%;
 		height: 48%;
-		background: color-mix(in srgb, var(--far) 55%, var(--sky2));
+		background: linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--far) 34%, var(--sky2)),
+			color-mix(in srgb, var(--far) 62%, var(--sky2))
+		);
 		clip-path: var(--shFar);
 	}
 	.band.mid {
 		bottom: 19%;
 		height: 42%;
-		background: var(--far);
+		background: linear-gradient(180deg, color-mix(in srgb, var(--far) 82%, #fff), var(--far));
 		clip-path: var(--shMid);
 	}
 	.band.near {
 		bottom: 16%;
 		height: 32%;
-		background: var(--near);
+		background: linear-gradient(180deg, color-mix(in srgb, var(--near) 78%, #fff), var(--near));
 		clip-path: var(--shNear);
+	}
+	/* the cave zones get a ceiling instead of a sky */
+	.roof {
+		top: 0;
+		left: -4%;
+		width: 108%;
+		height: 30%;
+		background: linear-gradient(180deg, color-mix(in srgb, var(--ground) 80%, #000), var(--near));
 	}
 	.floor {
 		left: 0;
 		right: 0;
 		bottom: 0;
 		height: 18%;
-		background: linear-gradient(180deg, var(--ground), color-mix(in srgb, var(--ground) 55%, #000));
+		background:
+			radial-gradient(60% 130% at 50% 0%, color-mix(in srgb, var(--ground) 55%, #fff) 0%, transparent 70%),
+			linear-gradient(180deg, color-mix(in srgb, var(--ground) 80%, #fff), var(--ground) 30%, color-mix(in srgb, var(--ground) 50%, #000));
+	}
+	/* a band of light sitting on the horizon, which is what stops the join between
+	   the last ridge and the ground reading as a hard seam */
+	.haze {
+		left: 0;
+		right: 0;
+		bottom: 14%;
+		height: 16%;
+		background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--sky2) 45%, transparent) 60%, transparent);
+		opacity: 0.7;
 	}
 	.motes {
 		inset: 0;
@@ -1157,9 +1184,13 @@
 		width: 100%;
 		image-rendering: pixelated;
 	}
-	.ricon.glyph,
-	.glyphbig {
+	.ricon.glyph {
 		font-size: 1.35rem;
+	}
+	/* item sprites are 30px art; blown up soft they look like mush */
+	.ricon.gear img {
+		width: 82%;
+		image-rendering: pixelated;
 	}
 	.rmid {
 		display: grid;
