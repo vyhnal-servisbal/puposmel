@@ -313,9 +313,88 @@ export const PARTY: Member[] = [
 	{ key: 'rayquaza', mon: [384, 'rayquaza'], type: 'dragon', cost: 3.45e14, dps: 1.9e14 }
 ];
 
-// Levels where a party member doubles its own output. Something to aim at
-// between recruits, so the middle of a run is not just holding a button.
+// Levels where a party member can be doubled again. These used to fire for free
+// the moment you hit the level, which meant the middle of a run had nothing to
+// decide; now each one is an item in the shop that you choose to buy.
 export const MILESTONES = [10, 25, 50, 100, 200, 400, 800, 1600];
+
+// ---------------------------------------------------------------------------
+// The shop. Bought with money, wiped by a rebirth, unlike the candy perks.
+
+export interface Upgrade {
+	key: string;
+	member?: string; // whose damage it doubles; absent means it hits everything
+	name: string;
+	desc: string;
+	icon: string;
+	need: number; // party member level it unlocks at
+	cost: number;
+	kind: 'member' | 'tap' | 'gold' | 'crit' | 'all';
+	value: number;
+}
+
+// four flavoured items per type, then the four late ones everybody shares
+const TYPE_ITEMS: Record<string, string[]> = {
+	grass: ['Miracle Seed', 'Leaf Stone', 'Meadow Plate', 'Rose Incense'],
+	fire: ['Charcoal', 'Fire Stone', 'Flame Plate', 'Blaze Band'],
+	water: ['Mystic Water', 'Water Stone', 'Splash Plate', 'Sea Incense'],
+	electric: ['Magnet', 'Thunder Stone', 'Zap Plate', 'Electirizer'],
+	fighting: ['Black Belt', 'Focus Band', 'Fist Plate', 'Protector'],
+	ghost: ['Spell Tag', 'Dusk Stone', 'Spooky Plate', 'Reaper Cloth'],
+	normal: ['Silk Scarf', 'Lucky Punch', 'Flat Plate', 'Cheri Berry'],
+	dragon: ['Dragon Fang', 'Dragon Scale', 'Draco Plate', 'Adamant Orb'],
+	rock: ['Hard Stone', 'Rock Incense', 'Stone Plate', 'Everstone'],
+	steel: ['Metal Coat', 'Steel Alloy', 'Iron Plate', 'Shiny Stone'],
+	psychic: ['Twisted Spoon', 'Dawn Stone', 'Mind Plate', 'Odd Keystone']
+};
+const LATE_ITEMS = ['Mega Stone', 'Z-Crystal', 'Dynamax Band', 'Terastal Orb'];
+const LATE_ICONS = ['🔶', '💠', '🔴', '🔷'];
+const ITEM_ICONS = ['🪨', '💎', '🛡️', '🎁'];
+
+function nameOf(key: string): string {
+	return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+function buildUpgrades(): Upgrade[] {
+	const out: Upgrade[] = [];
+
+	for (const m of PARTY) {
+		const items = TYPE_ITEMS[m.type] ?? TYPE_ITEMS.normal;
+		MILESTONES.forEach((need, i) => {
+			out.push({
+				key: `${m.key}.${i}`,
+				member: m.key,
+				name: i < 4 ? items[i] : LATE_ITEMS[i - 4],
+				desc: `${nameOf(m.key)} deals double damage`,
+				icon: i < 4 ? ITEM_ICONS[i] : LATE_ICONS[i - 4],
+				need,
+				// about thirty more levels' worth at the point it appears, so it is a
+				// real decision against just buying more levels
+				cost: m.cost * Math.pow(1.07, need) * 30,
+				kind: 'member',
+				value: 2
+			});
+		});
+	}
+
+	const globals: Upgrade[] = [
+		{ key: 'glove1', name: 'Trainer Gloves', desc: 'Tap damage doubled', icon: '🧤', need: 0, cost: 6e3, kind: 'tap', value: 2 },
+		{ key: 'coin1', name: 'Amulet Coin', desc: 'Money +50%', icon: '🪙', need: 0, cost: 2.5e4, kind: 'gold', value: 1.5 },
+		{ key: 'egg1', name: 'Lucky Egg', desc: 'Crit chance +8%', icon: '🥚', need: 0, cost: 1.8e5, kind: 'crit', value: 0.08 },
+		{ key: 'share1', name: 'Exp Share', desc: 'Whole party ×1.4', icon: '📡', need: 0, cost: 3.5e6, kind: 'all', value: 1.4 },
+		{ key: 'glove2', name: 'Power Gloves', desc: 'Tap damage doubled', icon: '🥊', need: 0, cost: 5e7, kind: 'tap', value: 2 },
+		{ key: 'coin2', name: 'Gold Pass', desc: 'Money +50%', icon: '💳', need: 0, cost: 8e8, kind: 'gold', value: 1.5 },
+		{ key: 'egg2', name: 'Golden Egg', desc: 'Crit chance +8%', icon: '🍳', need: 0, cost: 4e9, kind: 'crit', value: 0.08 },
+		{ key: 'share2', name: 'Rare Candy Box', desc: 'Whole party ×1.5', icon: '🍬', need: 0, cost: 6e10, kind: 'all', value: 1.5 },
+		{ key: 'glove3', name: 'Champion Gloves', desc: 'Tap damage doubled', icon: '🏆', need: 0, cost: 9e11, kind: 'tap', value: 2 },
+		{ key: 'coin3', name: 'Golden Bottle Cap', desc: 'Money +50%', icon: '🧴', need: 0, cost: 7e12, kind: 'gold', value: 1.5 },
+		{ key: 'share3', name: 'Master Ball', desc: 'Whole party ×1.6', icon: '🟣', need: 0, cost: 1e14, kind: 'all', value: 1.6 }
+	];
+
+	return [...out, ...globals];
+}
+
+export const UPGRADES: Upgrade[] = buildUpgrades();
 
 // Only what beats or bounces off what; anything unlisted is neutral. Immunities
 // are left out on purpose, a wall you cannot hit is not fun in a clicker.

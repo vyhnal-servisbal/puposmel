@@ -1,6 +1,6 @@
 import { supabase, hasSupabase } from '../supabase';
 import { cloud } from '../cloud.svelte';
-import { PARTY, PERKS, MILESTONES, ZONES, effect, zoneOf, type Mon, type Zone } from './data';
+import { PARTY, PERKS, UPGRADES, ZONES, effect, zoneOf, type Mon, type Upgrade, type Zone } from './data';
 
 // The whole game: numbers, the tick that moves them, and the two places a save
 // lives. Nothing here touches the DOM, so the page is only a view of this.
@@ -28,6 +28,7 @@ export interface Save {
 	gold: number;
 	tapLevel: number;
 	party: Record<string, number>;
+	ups: Record<string, 1>;
 	candy: number;
 	perks: Record<string, number>;
 	rebirths: number;
@@ -55,6 +56,7 @@ function emptySave(): Save {
 		gold: 0,
 		tapLevel: 1,
 		party: {},
+		ups: {},
 		candy: 0,
 		perks: {},
 		rebirths: 0,
@@ -154,14 +156,27 @@ class Game {
 	get candyBonus(): number {
 		return 1 + this.save.candy * 0.02;
 	}
+	// Everything the shop is currently doing, worked out once per read rather than
+	// per party member, because memberDps is called fourteen times a tick.
+	private shop(kind: Upgrade['kind']): number {
+		let mul = 1;
+		for (const u of UPGRADES) if (u.kind === kind && this.save.ups[u.key]) mul *= u.value;
+		return mul;
+	}
+	private shopSum(kind: Upgrade['kind']): number {
+		let add = 0;
+		for (const u of UPGRADES) if (u.kind === kind && this.save.ups[u.key]) add += u.value;
+		return add;
+	}
+
 	get powerBonus(): number {
-		return Math.pow(1.15, this.save.perks.power ?? 0) * this.candyBonus;
+		return Math.pow(1.15, this.save.perks.power ?? 0) * this.candyBonus * this.shop('all');
 	}
 	get goldBonus(): number {
-		return Math.pow(1.2, this.save.perks.gold ?? 0);
+		return Math.pow(1.2, this.save.perks.gold ?? 0) * this.shop('gold');
 	}
 	get critChance(): number {
-		return Math.min(0.6, 0.05 + (this.save.perks.crit ?? 0) * 0.03);
+		return Math.min(0.75, 0.05 + (this.save.perks.crit ?? 0) * 0.03 + this.shopSum('crit'));
 	}
 	get critMult(): number {
 		return 5;
@@ -182,10 +197,10 @@ class Game {
 		return this.save.party[key] ?? 0;
 	}
 
-	// every milestone the member has passed doubles it again
-	memberMult(level: number): number {
+	// every item bought for that member doubles it again
+	memberMult(key: string): number {
 		let m = 1;
-		for (const ms of MILESTONES) if (level >= ms) m *= 2;
+		for (const u of UPGRADES) if (u.member === key && this.save.ups[u.key]) m *= u.value;
 		return m;
 	}
 
@@ -194,7 +209,7 @@ class Game {
 		const lvl = this.memberLevel(key);
 		if (!m || !lvl) return 0;
 		const type = this.foe?.type ?? this.zone.type;
-		return m.dps * lvl * this.memberMult(lvl) * this.powerBonus * effect(m.type, type);
+		return m.dps * lvl * this.memberMult(key) * this.powerBonus * effect(m.type, type);
 	}
 
 	get dps(): number {
@@ -208,7 +223,9 @@ class Game {
 	get tapDamage(): number {
 		const flat = 10 * this.save.tapLevel;
 		const share = this.dps * 0.12;
-		return (flat + share) * this.powerBonus * Math.pow(1.25, this.save.perks.tap ?? 0);
+		return (
+			(flat + share) * this.powerBonus * Math.pow(1.25, this.save.perks.tap ?? 0) * this.shop('tap')
+		);
 	}
 
 	// Closed form for the geometric run rather than a loop, because the party list
@@ -409,6 +426,30 @@ class Game {
 		return Math.min(cap, Math.floor(n));
 	}
 
+	// only what this run can actually reach: bought items drop off the list, and a
+	// member's item stays hidden until that member is deep enough
+	get shopList(): Upgrade[] {
+		const out: Upgrade[] = [];
+		for (const u of UPGRADES) {
+			if (this.save.ups[u.key]) continue;
+			if (u.member && this.memberLevel(u.member) < u.need) continue;
+			out.push(u);
+		}
+		return out.sort((a, b) => a.cost - b.cost);
+	}
+	get shopOwned(): number {
+		return Object.keys(this.save.ups).length;
+	}
+
+	buyUp(key: string) {
+		const u = UPGRADES.find((x) => x.key === key);
+		if (!u || this.save.ups[key] || this.save.gold < u.cost) return;
+		this.save.gold -= u.cost;
+		this.save.ups[key] = 1;
+		this.dirty = true;
+		this.writeLocal();
+	}
+
 	buyTap() {
 		if (this.save.gold < this.tapCost) return;
 		this.save.gold -= this.tapCost;
@@ -437,6 +478,7 @@ class Game {
 		this.save.candy += gain;
 		this.save.rebirths++;
 		this.save.party = {};
+		this.save.ups = {};
 		this.save.tapLevel = 1;
 		this.save.kills = 0;
 		this.save.stage = 1;
@@ -567,4 +609,4 @@ class Game {
 }
 
 export const game = new Game();
-export { PARTY, PERKS, ZONES };
+export { PARTY, PERKS, UPGRADES, ZONES };

@@ -2,11 +2,12 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { fade, fly, scale } from 'svelte/transition';
 	import { game, fmt, pretty, hpAt, isBossStage, PARTY, PERKS, ZONES } from '$lib/clicker/game.svelte';
+	import type { Upgrade } from '$lib/clicker/data';
 	import { sceneOf } from '$lib/clicker/data';
 	import { spriteOf, aniOf, typeColor } from '$lib/dexStore.svelte';
 	import { cloud } from '$lib/cloud.svelte';
 
-	type Tab = 'party' | 'perks' | 'dex' | 'board';
+	type Tab = 'party' | 'shop' | 'perks' | 'dex' | 'board';
 	type Amount = 1 | 10 | 100 | 'max';
 
 	let tab = $state<Tab>('party');
@@ -89,6 +90,15 @@
 	});
 
 	let nextStageHp = $derived(hpAt(game.save.stage + 1));
+
+	// what the shop can sell right now, cheapest first, and how many of those are
+	// actually within reach so the tab can badge itself
+	let shopList = $derived(game.shopList);
+	let affordableUps = $derived(shopList.filter((u) => game.save.gold >= u.cost).length);
+
+	function upOwner(u: Upgrade): string {
+		return u.member ? pretty(u.member) : 'Everyone';
+	}
 	const AMOUNTS: Amount[] = [1, 10, 100, 'max'];
 </script>
 
@@ -161,13 +171,13 @@
 						Stage <b>{game.save.stage}</b>
 						<i>best {game.save.highest}</i>
 					</span>
-					{#if !isBossStage(game.save.stage)}
-						<span class="killdots">
-							{#each { length: 10 } as _, i}
-								<b class:done={i < game.save.kills}></b>
-							{/each}
-						</span>
-					{/if}
+					<!-- always rendered, hidden on boss stages: toggling it moved the
+					     whole arena every fifth stage and the page jumped -->
+					<span class="killdots" class:blank={isBossStage(game.save.stage)}>
+						{#each { length: 10 } as _, i}
+							<b class:done={i < game.save.kills}></b>
+						{/each}
+					</span>
 				</div>
 				<button class="navb" onclick={() => game.goForward()} disabled={game.save.stage >= game.save.highest}>›</button>
 			</div>
@@ -216,12 +226,10 @@
 						<i style="width:{hpPct}%"></i>
 						<span class="hptext">{fmt(Math.max(0, foe.hp))} / {fmt(foe.maxHp)}</span>
 					</div>
-					{#if foe.boss}
-						<div class="bosstimer" class:low={game.bossLeft < 8}>
-							<i style="width:{(game.bossLeft / 30) * 100}%"></i>
-							<span>{game.bossLeft.toFixed(1)}s</span>
-						</div>
-					{/if}
+					<div class="bosstimer" class:low={game.bossLeft < 8} class:blank={!foe.boss}>
+						<i style="width:{(game.bossLeft / 30) * 100}%"></i>
+						<span>{game.bossLeft.toFixed(1)}s</span>
+					</div>
 				</div>
 			{/if}
 
@@ -231,6 +239,9 @@
 		<aside class="panel">
 			<div class="tabbar">
 				<button class:on={tab === 'party'} onclick={() => (tab = 'party')}>Party</button>
+				<button class:on={tab === 'shop'} onclick={() => (tab = 'shop')}>
+					Shop{#if affordableUps > 0}<i class="pip">{affordableUps}</i>{/if}
+				</button>
 				<button class:on={tab === 'perks'} onclick={() => (tab = 'perks')}>
 					Rebirth{#if game.candyGain > 0}<i class="pip">!</i>{/if}
 				</button>
@@ -279,8 +290,8 @@
 								</b>
 								<i>
 									{#if lvl}
-										{fmt(game.memberDps(m.key))} dps{#if game.memberMult(lvl) > 1}
-											· ×{game.memberMult(lvl)} bonus{/if}
+										{fmt(game.memberDps(m.key))} dps{#if game.memberMult(m.key) > 1}
+											· ×{game.memberMult(m.key)} items{/if}
 									{:else}
 										recruit · {m.type} type
 									{/if}
@@ -290,6 +301,31 @@
 						</button>
 					{/if}
 				{/each}
+			{:else if tab === 'shop'}
+				<p class="shopnote">
+					{game.shopOwned} owned · {shopList.length} on the shelf. Wiped by a rebirth, unlike perks.
+				</p>
+				{#each shopList.slice(0, 40) as u (u.key)}
+					<button
+						class="rowbtn shopitem"
+						class:member={!!u.member}
+						onclick={() => game.buyUp(u.key)}
+						disabled={game.save.gold < u.cost}
+					>
+						<span class="ricon glyph">{u.icon}</span>
+						<span class="rmid">
+							<b>{u.name}</b>
+							<i>{u.desc}</i>
+						</span>
+						<span class="rcost">
+							₽ {fmt(u.cost)}
+							<em class="owner">{upOwner(u)}</em>
+						</span>
+					</button>
+				{/each}
+				{#if !shopList.length}
+					<p class="shopnote">Sold out. Level the party up for more.</p>
+				{/if}
 			{:else if tab === 'perks'}
 				<div class="rebirth">
 					<span class="rbtitle">Professor's Reset</span>
@@ -396,11 +432,21 @@
 	.pcwrap {
 		min-height: 100dvh;
 		padding: 0.7rem clamp(0.5rem, 2vw, 1.4rem) 1.6rem;
-		color: #e8e3f7;
+		color: #e2f1f5;
 		background:
-			radial-gradient(80% 50% at 50% -10%, color-mix(in srgb, var(--acc) 18%, transparent), transparent 70%),
-			linear-gradient(180deg, #0b0918, #0e0b1e 45%, #08060f);
+			radial-gradient(85% 55% at 50% -12%, color-mix(in srgb, var(--acc) 20%, transparent), transparent 72%),
+			radial-gradient(55% 45% at 100% 105%, rgba(0, 170, 175, 0.1), transparent 70%),
+			linear-gradient(180deg, #04121a, #072029 46%, #020a0f);
 		font-variant-numeric: tabular-nums;
+	}
+	/* a very faint scanline, just enough to read as a screen rather than a page */
+	.pcwrap::after {
+		content: '';
+		position: fixed;
+		inset: 0;
+		z-index: 60;
+		pointer-events: none;
+		background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 3px);
 	}
 
 	/* ---- status bar ---- */
@@ -421,7 +467,7 @@
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		border-bottom-width: 3px;
 		background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
-		color: #d6d0ee;
+		color: #c9e4ea;
 		text-decoration: none;
 		font-size: 0.82rem;
 		font-weight: 600;
@@ -466,14 +512,14 @@
 		border-bottom-width: 3px;
 		background:
 			linear-gradient(180deg, color-mix(in srgb, var(--c) 16%, transparent), transparent),
-			rgba(6, 4, 14, 0.6);
+			rgba(3, 14, 20, 0.6);
 	}
 	.gauge i {
 		font-style: normal;
 		font-size: 0.58rem;
 		letter-spacing: 0.16em;
 		text-transform: uppercase;
-		color: color-mix(in srgb, var(--c) 65%, #8d86ad);
+		color: color-mix(in srgb, var(--c) 65%, #6f97a1);
 	}
 	.gauge b {
 		font-size: 1rem;
@@ -512,7 +558,7 @@
 		font-size: 0.6rem;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: #5f5a80;
+		color: #4d747d;
 	}
 	.sync.on {
 		color: #86d7a2;
@@ -536,10 +582,16 @@
 	}
 
 	/* ---- the arena and its painted backdrop ---- */
+	/* Fixed rows and a floor under the height. Sprites vary wildly and the boss
+	   timer used to appear from nowhere every fifth stage, which shoved the whole
+	   page around. Nothing in here resizes any more. */
 	.arena {
 		position: relative;
 		display: grid;
+		grid-template-rows: auto minmax(0, 1fr) auto auto auto;
 		justify-items: center;
+		align-content: start;
+		min-height: 620px;
 		gap: 0.55rem;
 		padding: 0.9rem 0.9rem 1.1rem;
 		border-radius: 18px;
@@ -609,8 +661,8 @@
 	.vignette {
 		inset: 0;
 		background:
-			radial-gradient(75% 60% at 50% 45%, transparent 40%, rgba(4, 2, 10, 0.55)),
-			linear-gradient(180deg, rgba(4, 2, 10, 0.35), transparent 30%);
+			radial-gradient(75% 60% at 50% 45%, transparent 40%, rgba(2, 10, 15, 0.55)),
+			linear-gradient(180deg, rgba(2, 10, 15, 0.35), transparent 30%);
 	}
 	.arena > *:not(.scene) {
 		position: relative;
@@ -623,7 +675,7 @@
 		gap: 0.7rem;
 		padding: 0.35rem 0.5rem;
 		border-radius: 12px;
-		background: rgba(6, 4, 14, 0.55);
+		background: rgba(3, 14, 20, 0.55);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 	}
 	.navb {
@@ -632,7 +684,7 @@
 		border-radius: 8px;
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		background: rgba(255, 255, 255, 0.07);
-		color: #e8e3f7;
+		color: #e2f1f5;
 		font-size: 1rem;
 		line-height: 1;
 		cursor: pointer;
@@ -658,7 +710,7 @@
 		font-size: 0.72rem;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
-		color: #b9b2d6;
+		color: #a9ccd4;
 	}
 	.stagenum b {
 		font-size: 0.95rem;
@@ -673,6 +725,9 @@
 		display: flex;
 		gap: 3px;
 		margin-top: 0.15rem;
+	}
+	.killdots.blank {
+		visibility: hidden;
 	}
 	.killdots b {
 		width: 13px;
@@ -746,10 +801,13 @@
 	.nameplate {
 		display: flex;
 		align-items: center;
+		justify-content: center;
+		min-width: 260px;
+		min-height: 2rem;
 		gap: 0.4rem;
 		padding: 0.3rem 0.8rem;
 		border-radius: 999px;
-		background: rgba(6, 4, 14, 0.72);
+		background: rgba(3, 14, 20, 0.72);
 		border: 1px solid rgba(255, 255, 255, 0.12);
 	}
 	.nameplate.bossplate {
@@ -815,6 +873,9 @@
 		font-weight: 700;
 		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
 	}
+	.bosstimer.blank {
+		visibility: hidden;
+	}
 	.bosstimer {
 		position: relative;
 		height: 15px;
@@ -826,7 +887,7 @@
 	.bosstimer i {
 		display: block;
 		height: 100%;
-		background: linear-gradient(180deg, #9b8cff, #6f5ad8);
+		background: linear-gradient(180deg, #63dced, #2fa2b8);
 		transition: width 0.1s linear;
 	}
 	.bosstimer.low i {
@@ -844,8 +905,9 @@
 
 	.hint {
 		margin: 0;
+		min-height: 1.05rem;
 		font-size: 0.72rem;
-		color: #cdc6e4;
+		color: #bcd9e1;
 		text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 	}
 
@@ -856,6 +918,8 @@
 		align-content: start;
 		max-height: calc(100dvh - 5rem);
 		overflow-y: auto;
+		/* reserve the scrollbar so switching tabs never changes the column width */
+		scrollbar-gutter: stable;
 		padding: 0.5rem;
 		border-radius: 16px;
 		border: 2px solid rgba(255, 255, 255, 0.09);
@@ -870,27 +934,28 @@
 		padding: 3px;
 		margin: -0.5rem -0.5rem 0.2rem;
 		border-radius: 12px;
-		background: #120f24;
+		background: #072029;
 	}
 	.tabbar button {
 		flex: 1;
+		min-width: 0;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		gap: 0.2rem;
-		padding: 0.45rem 0.2rem;
+		padding: 0.45rem 0.15rem;
 		border: 0;
 		border-radius: 9px;
 		background: rgba(255, 255, 255, 0.04);
-		color: #9a93bd;
-		font-size: 0.78rem;
+		color: #7fa4ae;
+		font-size: 0.72rem;
 		font-weight: 700;
-		letter-spacing: 0.03em;
+		letter-spacing: 0.01em;
 		cursor: pointer;
 	}
 	.tabbar button.on {
 		background: linear-gradient(180deg, color-mix(in srgb, var(--acc) 55%, #fff 8%), var(--acc));
-		color: #0d0a18;
+		color: #03181f;
 	}
 	.pip {
 		font-style: normal;
@@ -911,14 +976,14 @@
 		font-size: 0.68rem;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		color: #8f88b4;
+		color: #749ea9;
 	}
 	.amounts button {
 		padding: 0.22rem 0.5rem;
 		border-radius: 7px;
 		border: 1px solid rgba(255, 255, 255, 0.12);
 		background: rgba(255, 255, 255, 0.04);
-		color: #cfc9ea;
+		color: #bcd9e1;
 		font-size: 0.72rem;
 		font-weight: 700;
 		letter-spacing: 0;
@@ -938,7 +1003,7 @@
 		padding: 0.4rem 0.65rem 0.4rem 0.4rem;
 		border-radius: 11px;
 		border: 1px solid rgba(255, 255, 255, 0.09);
-		border-left: 3px solid color-mix(in srgb, var(--t, #6f5ad8) 55%, transparent);
+		border-left: 3px solid color-mix(in srgb, var(--t, #2fa2b8) 55%, transparent);
 		background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
 		color: inherit;
 		text-align: left;
@@ -1005,7 +1070,7 @@
 	.rmid i {
 		font-style: normal;
 		font-size: 0.7rem;
-		color: #948dba;
+		color: #7ba4ae;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -1024,6 +1089,27 @@
 	}
 	.perk {
 		border-left-color: #ff9ecb;
+	}
+	.shopitem {
+		border-left-color: #ffd066;
+	}
+	.shopitem.member {
+		border-left-color: #5fe0c8;
+	}
+	.shopnote {
+		margin: 0.15rem 0;
+		font-size: 0.7rem;
+		color: #749ea9;
+	}
+	.owner {
+		display: block;
+		font-style: normal;
+		font-size: 0.62rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #6f97a1;
+		text-align: right;
 	}
 
 	.rebirth {
@@ -1051,10 +1137,10 @@
 	.rbsmall {
 		margin: 0;
 		font-size: 0.72rem;
-		color: #948dba;
+		color: #7ba4ae;
 	}
 	.rbsmall b {
-		color: #d6d0ee;
+		color: #c9e4ea;
 	}
 	.confirm {
 		display: flex;
@@ -1067,12 +1153,12 @@
 		font-size: 0.68rem;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
-		color: #8f88b4;
+		color: #749ea9;
 	}
 	.dexhead b {
 		font-size: 0.85rem;
 		letter-spacing: 0;
-		color: #e8e3f7;
+		color: #e2f1f5;
 	}
 	.dexgrid {
 		display: grid;
@@ -1122,7 +1208,7 @@
 	.boardnote {
 		margin: 0.2rem 0;
 		font-size: 0.72rem;
-		color: #8f88b4;
+		color: #749ea9;
 	}
 	.boardlist {
 		display: grid;
@@ -1147,7 +1233,7 @@
 	}
 	.bpos {
 		font-weight: 800;
-		color: #8f88b4;
+		color: #749ea9;
 	}
 	.bname {
 		display: grid;
@@ -1163,7 +1249,7 @@
 	.bname i {
 		font-style: normal;
 		font-size: 0.66rem;
-		color: #8f88b4;
+		color: #749ea9;
 	}
 	.bstage {
 		display: grid;
@@ -1178,7 +1264,7 @@
 		font-size: 0.58rem;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: #8f88b4;
+		color: #749ea9;
 	}
 
 	.modal {
@@ -1188,7 +1274,7 @@
 		display: grid;
 		place-items: center;
 		padding: 1rem;
-		background: rgba(4, 2, 10, 0.85);
+		background: rgba(2, 10, 15, 0.85);
 	}
 	.sheet {
 		display: grid;
@@ -1199,7 +1285,7 @@
 		padding: 1.4rem;
 		border-radius: 16px;
 		border: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
-		background: #120f24;
+		background: #072029;
 	}
 	.sheet h2 {
 		margin: 0;
