@@ -2,13 +2,15 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { fade, fly, scale } from 'svelte/transition';
 	import { game, fmt, pretty, hpAt, isBossStage, PARTY, PERKS, ZONES } from '$lib/clicker/game.svelte';
+	import { sceneOf } from '$lib/clicker/data';
 	import { spriteOf, aniOf, typeColor } from '$lib/dexStore.svelte';
 	import { cloud } from '$lib/cloud.svelte';
 
 	type Tab = 'party' | 'perks' | 'dex' | 'board';
+	type Amount = 1 | 10 | 100 | 'max';
 
 	let tab = $state<Tab>('party');
-	let buyAmt = $state<1 | 10 | 100>(1);
+	let buyAmt = $state<Amount>(1);
 	let confirming = $state(false);
 	let broken = $state<Record<string, boolean>>({});
 
@@ -28,6 +30,11 @@
 	let hpPct = $derived(foe ? Math.max(0, (foe.hp / foe.maxHp) * 100) : 0);
 	let zone = $derived(game.zone);
 	let accent = $derived(typeColor(zone.type));
+	let scene = $derived(sceneOf(zone.type));
+	let sceneVars = $derived(
+		`--sky1:${scene.sky1};--sky2:${scene.sky2};--far:${scene.far};--near:${scene.near};` +
+			`--ground:${scene.ground};--orb:${scene.orb};--glow:${scene.glow};--fleck:${scene.fleck}`
+	);
 
 	// Showdown has no animated sprite for every species, so a failed gif quietly
 	// falls back to the still one rather than leaving a hole where the foe was.
@@ -40,8 +47,21 @@
 		game.tap(((e.clientX - r.left) / r.width) * 100, ((e.clientY - r.top) / r.height) * 100);
 	}
 
-	function buy(key: string) {
-		game.buyMember(key, buyAmt);
+	// A held space repeats at whatever rate the OS feels like, which was landing
+	// around forty taps a second. Capped to roughly what a hand can do.
+	const KEY_GAP = 90;
+	let lastKey = 0;
+	function keyTap() {
+		const now = performance.now();
+		if (now - lastKey < KEY_GAP) return;
+		lastKey = now;
+		game.tap(50, 44);
+	}
+
+	// what a row will actually buy right now, which is never more than the money
+	function willBuy(key: string): number {
+		const can = game.affordable(key, buyAmt === 'max' ? 1000 : buyAmt);
+		return buyAmt === 'max' ? can : Math.min(buyAmt, can);
 	}
 
 	function label(n: number): string {
@@ -69,6 +89,7 @@
 	});
 
 	let nextStageHp = $derived(hpAt(game.save.stage + 1));
+	const AMOUNTS: Amount[] = [1, 10, 100, 'max'];
 </script>
 
 <svelte:head><title>Pokemon Clicker</title></svelte:head>
@@ -76,46 +97,79 @@
 	onkeydown={(e) => {
 		if (e.key === ' ') {
 			e.preventDefault();
-			game.tap(50, 45);
+			keyTap();
 		}
 	}}
 />
 
 <div class="pcwrap" style="--acc:{accent}">
-	<header class="pchead">
-		<a class="pcbtn" href="/">← Binder</a>
-		<span class="who">{cloud.profileName || 'Trainer'}</span>
-		<span class="money">₽ {fmt(game.save.gold)}</span>
-		<span class="dpsline">{fmt(game.dps)} <i>dps</i></span>
-		<span class="tapline">{fmt(game.tapDamage)} <i>per tap</i></span>
-		{#if game.save.candy}
-			<span class="candy">🍬 {fmt(game.save.candy)}</span>
-		{/if}
-		<span class="sync" class:on={game.saving === 'saved'} class:bad={game.saving === 'error'}>
-			{game.saving === 'saving' ? 'saving' : game.saving === 'error' ? 'save failed' : 'synced'}
+	<header class="hud">
+		<a class="chip nav" href="/">‹ Binder</a>
+
+		<div class="gauges">
+			<span class="gauge money">
+				<i>money</i>
+				<b>₽ {fmt(game.save.gold)}</b>
+			</span>
+			<span class="gauge dps">
+				<i>party dps</i>
+				<b>{fmt(game.dps)}</b>
+			</span>
+			<span class="gauge tap">
+				<i>per tap</i>
+				<b>{fmt(game.tapDamage)}</b>
+			</span>
+			<span class="gauge crit">
+				<i>crit</i>
+				<b>{Math.round(game.critChance * 100)}%</b>
+			</span>
+			{#if game.save.candy || game.save.rebirths}
+				<span class="gauge candy">
+					<i>candy</i>
+					<b>{fmt(game.save.candy)}</b>
+				</span>
+			{/if}
+		</div>
+
+		<span class="trainer">
+			<b>{cloud.profileName || 'Trainer'}</b>
+			<i class="sync" class:on={game.saving === 'saved'} class:bad={game.saving === 'error'}>
+				{game.saving === 'error' ? 'save failed' : game.saving === 'saving' ? 'saving' : 'synced'}
+			</i>
 		</span>
 	</header>
 
 	<div class="pcgrid">
-		<section class="arena">
+		<section class="arena" style={sceneVars}>
+			<!-- the whole backdrop is drawn from the zone palette: sky, a glow, two
+			     silhouette ridges and a floor. No images, so switching zones costs
+			     nothing but a handful of custom properties. -->
+			<div class="scene" aria-hidden="true">
+				<span class="orb"></span>
+				<span class="ridge far"></span>
+				<span class="ridge near"></span>
+				<span class="floor"></span>
+				<span class="motes"></span>
+				<span class="vignette"></span>
+			</div>
+
 			<div class="stagebar">
-				<button class="navb" onclick={() => game.goBack()} disabled={game.save.stage <= 1}>◀</button>
+				<button class="navb" onclick={() => game.goBack()} disabled={game.save.stage <= 1}>‹</button>
 				<div class="stagemid">
 					<strong>{zone.name}</strong>
-					<span>Stage {game.save.stage} · best {game.save.highest}</span>
+					<span class="stagenum">
+						Stage <b>{game.save.stage}</b>
+						<i>best {game.save.highest}</i>
+					</span>
 					{#if !isBossStage(game.save.stage)}
-						<i class="killdots">
+						<span class="killdots">
 							{#each { length: 10 } as _, i}
 								<b class:done={i < game.save.kills}></b>
 							{/each}
-						</i>
+						</span>
 					{/if}
 				</div>
-				<button
-					class="navb"
-					onclick={() => game.goForward()}
-					disabled={game.save.stage >= game.save.highest}>▶</button
-				>
+				<button class="navb" onclick={() => game.goForward()} disabled={game.save.stage >= game.save.highest}>›</button>
 			</div>
 
 			{#if foe}
@@ -129,7 +183,7 @@
 					role="button"
 					tabindex="0"
 				>
-					<span class="ring"></span>
+					<span class="shadow"></span>
 					{#key foe.mon[1] + String(foe.shiny)}
 						<img
 							class="foeArt"
@@ -137,97 +191,98 @@
 							alt={pretty(foe.mon[1])}
 							draggable="false"
 							onerror={() => (broken[foe.mon[1]] = true)}
-							in:scale={{ duration: 200, start: 0.7 }}
+							in:scale={{ duration: 220, start: 0.75 }}
 						/>
 					{/key}
 
 					{#each game.hits as h (h.id)}
-						<span
-							class="dmg"
-							class:crit={h.crit}
-							style="left:{h.x}%; top:{h.y}%"
-							out:fade={{ duration: 300 }}
-						>
+						<span class="dmg" class:crit={h.crit} style="left:{h.x}%; top:{h.y}%">
 							{fmt(h.amount)}{h.crit ? '!' : ''}
 						</span>
 					{/each}
 				</div>
 
-				<div class="foename">
-					{#if foe.shiny}<em class="shinytag">✦ SHINY</em>{/if}
-					<b>{pretty(foe.mon[1])}</b>
-					{#if foe.boss}<em class="bosstag">BOSS</em>{/if}
+				<div class="nameplate" class:bossplate={foe.boss}>
+					<span class="npname">
+						{#if foe.shiny}<em class="shinytag">✦</em>{/if}
+						{pretty(foe.mon[1])}
+					</span>
 					<span class="typetag" style="--t:{typeColor(foe.type)}">{foe.type}</span>
+					{#if foe.boss}<span class="bosstag">BOSS</span>{/if}
 				</div>
 
 				<div class="hpwrap">
-					<div class="hpbar"><i style="width:{hpPct}%"></i></div>
-					<span class="hptext">{fmt(Math.max(0, foe.hp))} / {fmt(foe.maxHp)}</span>
-				</div>
-
-				{#if foe.boss}
-					<div class="bosstimer" class:low={game.bossLeft < 8}>
-						<i style="width:{(game.bossLeft / 30) * 100}%"></i>
-						<span>{game.bossLeft.toFixed(1)}s</span>
+					<div class="hpbar" class:bosshp={foe.boss}>
+						<i style="width:{hpPct}%"></i>
+						<span class="hptext">{fmt(Math.max(0, foe.hp))} / {fmt(foe.maxHp)}</span>
 					</div>
-				{/if}
+					{#if foe.boss}
+						<div class="bosstimer" class:low={game.bossLeft < 8}>
+							<i style="width:{(game.bossLeft / 30) * 100}%"></i>
+							<span>{game.bossLeft.toFixed(1)}s</span>
+						</div>
+					{/if}
+				</div>
 			{/if}
 
-			<p class="hint">Click the Pokémon, or hold Space. Next stage needs {fmt(nextStageHp)} HP.</p>
+			<p class="hint">Tap the Pokémon or hold Space · next stage is {fmt(nextStageHp)} HP</p>
 		</section>
 
 		<aside class="panel">
 			<div class="tabbar">
 				<button class:on={tab === 'party'} onclick={() => (tab = 'party')}>Party</button>
 				<button class:on={tab === 'perks'} onclick={() => (tab = 'perks')}>
-					Rebirth {#if game.candyGain > 0}<i class="pip">{fmt(game.candyGain)}</i>{/if}
+					Rebirth{#if game.candyGain > 0}<i class="pip">!</i>{/if}
 				</button>
-				<button class:on={tab === 'dex'} onclick={() => (tab = 'dex')}>
-					Dex <i>{game.dexCount}</i>
-				</button>
+				<button class:on={tab === 'dex'} onclick={() => (tab = 'dex')}>Dex</button>
 				<button class:on={tab === 'board'} onclick={() => (tab = 'board')}>Board</button>
 			</div>
 
 			{#if tab === 'party'}
 				<div class="amounts">
 					<span>Buy</span>
-					{#each [1, 10, 100] as n}
-						<button class:on={buyAmt === n} onclick={() => (buyAmt = n as 1 | 10 | 100)}>×{n}</button>
+					{#each AMOUNTS as n (n)}
+						<button class:on={buyAmt === n} onclick={() => (buyAmt = n)}>
+							{n === 'max' ? 'MAX' : '×' + n}
+						</button>
 					{/each}
 				</div>
 
 				<button class="rowbtn tapup" onclick={() => game.buyTap()} disabled={game.save.gold < game.tapCost}>
-					<span class="ricon">👆</span>
+					<span class="ricon glyph">👆</span>
 					<span class="rmid">
-						<b>Tap power</b>
-						<i>level {game.save.tapLevel} · {fmt(game.tapDamage)} per tap</i>
+						<b>Tap Power <u>lv {game.save.tapLevel}</u></b>
+						<i>{fmt(game.tapDamage)} damage per tap</i>
 					</span>
 					<span class="rcost">₽ {fmt(game.tapCost)}</span>
 				</button>
 
 				{#each PARTY as m, i (m.key)}
 					{@const lvl = game.memberLevel(m.key)}
-					{@const cost = game.memberCost(m.key, buyAmt)}
+					{@const n = willBuy(m.key)}
+					{@const cost = game.memberCost(m.key, Math.max(1, n))}
 					{@const locked = !lvl && i > 0 && !game.memberLevel(PARTY[i - 1].key)}
 					{#if !locked}
 						<button
 							class="rowbtn"
 							class:owned={lvl > 0}
 							style="--t:{typeColor(m.type)}"
-							onclick={() => buy(m.key)}
-							disabled={game.save.gold < cost}
+							onclick={() => game.buyMember(m.key, Math.max(1, n))}
+							disabled={n < 1}
 						>
-							<span class="ricon">
-								<img src={spriteOf(m.mon[0])} alt="" loading="lazy" />
-							</span>
+							<span class="ricon"><img src={spriteOf(m.mon[0])} alt="" loading="lazy" /></span>
 							<span class="rmid">
-								<b>{pretty(m.mon[1])} {#if lvl}<u>lv {lvl}</u>{/if}</b>
+								<b>
+									{pretty(m.mon[1])}
+									{#if lvl}<u>lv {lvl}</u>{/if}
+									{#if n > 1}<em class="plus">+{n}</em>{/if}
+								</b>
 								<i>
 									{#if lvl}
-										{fmt(game.memberDps(m.key))} dps
-										{#if game.memberMult(lvl) > 1}· ×{game.memberMult(lvl)}{/if}
+										{fmt(game.memberDps(m.key))} dps{#if game.memberMult(lvl) > 1}
+											· ×{game.memberMult(lvl)} bonus{/if}
 									{:else}
-										recruit · {m.type}
+										recruit · {m.type} type
 									{/if}
 								</i>
 							</span>
@@ -237,29 +292,26 @@
 				{/each}
 			{:else if tab === 'perks'}
 				<div class="rebirth">
+					<span class="rbtitle">Professor's Reset</span>
 					<p class="rbline">
-						Reset the run and keep candy, perks and the Dex. You would get
-						<b>🍬 {fmt(game.candyGain)}</b> candy.
+						Wipe the run, keep candy, perks and the Dex. Worth
+						<b>🍬 {fmt(game.candyGain)}</b> right now.
 					</p>
 					<p class="rbsmall">
-						Holding candy is itself worth <b>+{Math.round((game.candyBonus - 1) * 100)}%</b> damage,
-						so spending every last one is not always right. Rebirths so far: {game.save.rebirths}.
-						{#if game.startGold > 0}You would restart with ₽ {fmt(game.startGold)}.{/if}
+						Candy you are holding is itself <b>+{Math.round((game.candyBonus - 1) * 100)}%</b> damage,
+						so spending every last one is not always right. Rebirths: {game.save.rebirths}.
+						{#if game.startGold > 0}Restarts with ₽ {fmt(game.startGold)}.{/if}
 					</p>
 					{#if confirming}
 						<div class="confirm">
-							<button class="pcbtn go" onclick={() => { game.rebirth(); confirming = false; tab = 'party'; }}>
-								Yes, rebirth
+							<button class="chip go" onclick={() => { game.rebirth(); confirming = false; tab = 'party'; }}>
+								Yes, reset
 							</button>
-							<button class="pcbtn" onclick={() => (confirming = false)}>Cancel</button>
+							<button class="chip" onclick={() => (confirming = false)}>Cancel</button>
 						</div>
 					{:else}
-						<button
-							class="pcbtn go wide"
-							onclick={() => (confirming = true)}
-							disabled={game.candyGain <= 0}
-						>
-							{game.candyGain > 0 ? `Rebirth for ${fmt(game.candyGain)} candy` : 'Get further first'}
+						<button class="chip go wide" onclick={() => (confirming = true)} disabled={game.candyGain <= 0}>
+							{game.candyGain > 0 ? `Rebirth for ${fmt(game.candyGain)} candy` : 'Push further first'}
 						</button>
 					{/if}
 				</div>
@@ -272,20 +324,20 @@
 						onclick={() => game.buyPerk(p.key)}
 						disabled={game.save.candy < cost || lvl >= p.max}
 					>
-						<span class="ricon big">{p.icon}</span>
+						<span class="ricon glyph">{p.icon}</span>
 						<span class="rmid">
-							<b>{p.name} {#if lvl}<u>lv {lvl}</u>{/if}</b>
+							<b>{p.name} {#if lvl}<u>lv {lvl}/{p.max}</u>{/if}</b>
 							<i>{p.desc}</i>
 						</span>
-						<span class="rcost candycost">
-							{lvl >= p.max ? 'MAX' : `🍬 ${fmt(cost)}`}
-						</span>
+						<span class="rcost candycost">{lvl >= p.max ? 'MAX' : `🍬 ${fmt(cost)}`}</span>
 					</button>
 				{/each}
 			{:else if tab === 'dex'}
-				<p class="dexline">
-					{game.dexCount} / {dexAll.length} seen · {game.shinyCount} shiny · {fmt(game.save.clicks)} taps
-				</p>
+				<div class="dexhead">
+					<span><b>{game.dexCount}</b>/{dexAll.length} seen</span>
+					<span><b>{game.shinyCount}</b> shiny</span>
+					<span><b>{fmt(game.save.clicks)}</b> taps</span>
+				</div>
 				<div class="dexgrid">
 					{#each dexAll as d (d.id)}
 						{@const row = game.save.dex[d.id]}
@@ -299,18 +351,20 @@
 					{/each}
 				</div>
 			{:else}
-				<p class="dexline">Highest stage wins. Refreshes every half minute.</p>
+				<p class="boardnote">Highest stage wins. Refreshes every half minute.</p>
 				<div class="boardlist">
 					{#each game.board as b, i (b.profile_name)}
-						<div class="brow" class:me={b.profile_name === cloud.profileName}>
+						<div class="brow" class:me={b.profile_name === cloud.profileName} class:first={i === 0}>
 							<span class="bpos">{i + 1}</span>
-							<span class="bname">{b.profile_name}</span>
-							<span class="bstage">stage {b.highest}</span>
-							<span class="bmeta">{b.rebirths} rebirths · 🍬 {fmt(b.candy)}</span>
+							<span class="bname">
+								<b>{b.profile_name}</b>
+								<i>{b.rebirths} rebirths · 🍬 {fmt(b.candy)}</i>
+							</span>
+							<span class="bstage"><b>{b.highest}</b><i>stage</i></span>
 						</div>
 					{/each}
 					{#if !game.board.length}
-						<p class="hint">Nothing here yet.</p>
+						<p class="boardnote">Nothing here yet.</p>
 					{/if}
 				</div>
 			{/if}
@@ -322,11 +376,10 @@
 			<div class="sheet" in:fly={{ y: 14, duration: 200 }}>
 				<h2>Your party kept working</h2>
 				<p>
-					You were away {label(game.offlineSeconds)} and they farmed
-					<b>₽ {fmt(game.offlineGold)}</b>.
+					Away for {label(game.offlineSeconds)}. They farmed <b>₽ {fmt(game.offlineGold)}</b>.
 				</p>
 				<p class="rbsmall">Offline rate is {Math.round(game.idleRate * 100)}%, capped at 12 hours.</p>
-				<button class="pcbtn go" onclick={() => game.dismissOffline()}>Nice</button>
+				<button class="chip go" onclick={() => game.dismissOffline()}>Nice</button>
 			</div>
 		</div>
 	{/if}
@@ -337,83 +390,127 @@
 </div>
 
 <style>
+	/* A deliberately different look from the rest of the app: chunky bevelled
+	   panels, hard edges and tabular numbers, so it reads as a game screen rather
+	   than another page of the binder. */
 	.pcwrap {
 		min-height: 100dvh;
-		padding: 0.8rem clamp(0.6rem, 2vw, 1.6rem) 2rem;
-		color: #e4dff5;
+		padding: 0.7rem clamp(0.5rem, 2vw, 1.4rem) 1.6rem;
+		color: #e8e3f7;
 		background:
-			radial-gradient(70% 45% at 50% -8%, color-mix(in srgb, var(--acc) 22%, transparent), transparent 70%),
-			radial-gradient(50% 40% at 8% 100%, rgba(120, 80, 220, 0.16), transparent 70%),
-			linear-gradient(180deg, #0a0714, #0d0a1c 50%, #070511);
-	}
-
-	.pchead {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem;
-		max-width: 1280px;
-		margin: 0 auto 0.9rem;
-	}
-	.pcbtn {
-		padding: 0.4rem 0.8rem;
-		border-radius: 10px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.05);
-		color: #cfc9ea;
-		text-decoration: none;
-		font-size: 0.84rem;
-		cursor: pointer;
-	}
-	.pcbtn:hover:not(:disabled) {
-		border-color: var(--acc);
-	}
-	.pcbtn:disabled {
-		opacity: 0.45;
-		cursor: default;
-	}
-	.pcbtn.go {
-		border-color: rgba(255, 190, 110, 0.7);
-		background: linear-gradient(180deg, rgba(255, 175, 85, 0.28), rgba(255, 120, 40, 0.12));
-		color: #fff;
-		font-weight: 600;
-	}
-	.pcbtn.wide {
-		width: 100%;
-	}
-	.who {
-		font-size: 0.8rem;
-		color: #8f88b4;
-	}
-	.money,
-	.dpsline,
-	.tapline,
-	.candy {
-		padding: 0.32rem 0.7rem;
-		border-radius: 999px;
-		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(255, 255, 255, 0.04);
-		font-size: 0.86rem;
+			radial-gradient(80% 50% at 50% -10%, color-mix(in srgb, var(--acc) 18%, transparent), transparent 70%),
+			linear-gradient(180deg, #0b0918, #0e0b1e 45%, #08060f);
 		font-variant-numeric: tabular-nums;
 	}
+
+	/* ---- status bar ---- */
+	.hud {
+		display: flex;
+		align-items: stretch;
+		gap: 0.5rem;
+		max-width: 1320px;
+		margin: 0 auto 0.7rem;
+		flex-wrap: wrap;
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.45rem 0.85rem;
+		border-radius: 10px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		border-bottom-width: 3px;
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
+		color: #d6d0ee;
+		text-decoration: none;
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: transform 0.08s, border-color 0.15s;
+	}
+	.chip:hover:not(:disabled) {
+		border-color: var(--acc);
+	}
+	.chip:active:not(:disabled) {
+		transform: translateY(2px);
+		border-bottom-width: 1px;
+	}
+	.chip:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+	.chip.go {
+		border-color: rgba(255, 190, 110, 0.75);
+		background: linear-gradient(180deg, #ffb457, #e07a2a);
+		color: #26150a;
+		text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+	}
+	.chip.wide {
+		width: 100%;
+	}
+
+	.gauges {
+		display: flex;
+		flex: 1;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+	/* each readout is its own lit segment, coloured by what it measures */
+	.gauge {
+		display: grid;
+		gap: 0.05rem;
+		padding: 0.3rem 0.8rem;
+		min-width: 92px;
+		border-radius: 10px;
+		border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+		border-bottom-width: 3px;
+		background:
+			linear-gradient(180deg, color-mix(in srgb, var(--c) 16%, transparent), transparent),
+			rgba(6, 4, 14, 0.6);
+	}
+	.gauge i {
+		font-style: normal;
+		font-size: 0.58rem;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: color-mix(in srgb, var(--c) 65%, #8d86ad);
+	}
+	.gauge b {
+		font-size: 1rem;
+		line-height: 1.1;
+		color: var(--c);
+		text-shadow: 0 0 12px color-mix(in srgb, var(--c) 40%, transparent);
+	}
 	.money {
-		color: #ffd08a;
-		border-color: rgba(255, 208, 138, 0.3);
+		--c: #ffd066;
+	}
+	.dps {
+		--c: #5fe0c8;
+	}
+	.tap {
+		--c: #ff9f6b;
+	}
+	.crit {
+		--c: #ff6b8f;
 	}
 	.candy {
-		color: #ff9ecb;
-		border-color: rgba(255, 158, 203, 0.35);
+		--c: #ff9ecb;
 	}
-	.dpsline i,
-	.tapline i {
-		font-style: normal;
-		font-size: 0.7rem;
-		color: #8f88b4;
+
+	.trainer {
+		display: grid;
+		align-content: center;
+		justify-items: end;
+		gap: 0.1rem;
+		padding: 0 0.3rem;
+	}
+	.trainer b {
+		font-size: 0.86rem;
 	}
 	.sync {
-		margin-left: auto;
-		font-size: 0.7rem;
-		letter-spacing: 0.1em;
+		font-style: normal;
+		font-size: 0.6rem;
+		letter-spacing: 0.14em;
 		text-transform: uppercase;
 		color: #5f5a80;
 	}
@@ -421,88 +518,176 @@
 		color: #86d7a2;
 	}
 	.sync.bad {
-		color: #ff9a8a;
+		color: #ff8a7a;
 	}
 
 	.pcgrid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-		gap: 1rem;
-		max-width: 1280px;
+		grid-template-columns: minmax(0, 1fr) minmax(310px, 390px);
+		gap: 0.8rem;
+		max-width: 1320px;
 		margin: 0 auto;
 		align-items: start;
 	}
-	@media (max-width: 900px) {
+	@media (max-width: 940px) {
 		.pcgrid {
 			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 
+	/* ---- the arena and its painted backdrop ---- */
 	.arena {
+		position: relative;
 		display: grid;
 		justify-items: center;
-		gap: 0.7rem;
-		padding: 1rem 1rem 1.3rem;
-		border-radius: 20px;
-		border: 1px solid color-mix(in srgb, var(--acc) 26%, rgba(255, 255, 255, 0.08));
-		background:
-			radial-gradient(85% 60% at 50% 8%, color-mix(in srgb, var(--acc) 16%, transparent), transparent 72%),
-			rgba(255, 255, 255, 0.025);
+		gap: 0.55rem;
+		padding: 0.9rem 0.9rem 1.1rem;
+		border-radius: 18px;
+		border: 2px solid rgba(255, 255, 255, 0.1);
+		overflow: hidden;
+		isolation: isolate;
 	}
+	.scene {
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		background: linear-gradient(180deg, var(--sky1), var(--sky2));
+	}
+	.scene span {
+		position: absolute;
+		display: block;
+	}
+	.orb {
+		top: 12%;
+		right: 16%;
+		width: 74px;
+		height: 74px;
+		border-radius: 50%;
+		background: var(--orb);
+		box-shadow: 0 0 70px 30px var(--glow);
+		opacity: 0.9;
+	}
+	/* two ridges, the far one lighter and higher, which is enough to read as depth */
+	.ridge {
+		left: -10%;
+		width: 120%;
+		background: var(--far);
+		clip-path: polygon(0 62%, 9% 40%, 18% 55%, 28% 28%, 38% 48%, 50% 22%, 61% 47%, 71% 32%, 82% 52%, 92% 38%, 100% 58%, 100% 100%, 0 100%);
+	}
+	.ridge.far {
+		bottom: 26%;
+		height: 46%;
+		opacity: 0.75;
+	}
+	.ridge.near {
+		bottom: 18%;
+		height: 38%;
+		background: var(--near);
+		clip-path: polygon(0 70%, 12% 52%, 24% 66%, 35% 44%, 48% 62%, 58% 40%, 70% 60%, 84% 46%, 100% 66%, 100% 100%, 0 100%);
+	}
+	.floor {
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 22%;
+		background: linear-gradient(180deg, var(--ground), color-mix(in srgb, var(--ground) 55%, #000));
+	}
+	/* drifting motes: snow in the ice path, embers in the volcano, sparks in the
+	   power plant, all the same two gradients tinted by the zone */
+	.motes {
+		inset: 0;
+		background-image:
+			radial-gradient(2px 2px at 12% 30%, var(--fleck), transparent),
+			radial-gradient(2px 2px at 34% 62%, var(--fleck), transparent),
+			radial-gradient(1.6px 1.6px at 58% 22%, var(--fleck), transparent),
+			radial-gradient(2px 2px at 76% 54%, var(--fleck), transparent),
+			radial-gradient(1.4px 1.4px at 90% 34%, var(--fleck), transparent),
+			radial-gradient(1.6px 1.6px at 22% 78%, var(--fleck), transparent);
+		opacity: 0.75;
+		animation: pcdrift 9s linear infinite;
+	}
+	.vignette {
+		inset: 0;
+		background:
+			radial-gradient(75% 60% at 50% 45%, transparent 40%, rgba(4, 2, 10, 0.55)),
+			linear-gradient(180deg, rgba(4, 2, 10, 0.35), transparent 30%);
+	}
+	.arena > *:not(.scene) {
+		position: relative;
+		z-index: 1;
+	}
+
 	.stagebar {
 		display: flex;
 		align-items: center;
-		gap: 0.9rem;
+		gap: 0.7rem;
+		padding: 0.35rem 0.5rem;
+		border-radius: 12px;
+		background: rgba(6, 4, 14, 0.55);
+		border: 1px solid rgba(255, 255, 255, 0.1);
 	}
 	.navb {
-		width: 2rem;
-		height: 2rem;
-		border-radius: 50%;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.05);
-		color: #cfc9ea;
+		width: 1.9rem;
+		height: 1.9rem;
+		border-radius: 8px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(255, 255, 255, 0.07);
+		color: #e8e3f7;
+		font-size: 1rem;
+		line-height: 1;
 		cursor: pointer;
 	}
 	.navb:disabled {
-		opacity: 0.25;
+		opacity: 0.22;
 		cursor: default;
 	}
 	.stagemid {
 		display: grid;
 		justify-items: center;
-		gap: 0.15rem;
-		min-width: 220px;
+		gap: 0.1rem;
+		min-width: 210px;
 	}
 	.stagemid strong {
-		font-size: 1.15rem;
-		color: var(--acc);
+		font-size: 0.98rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: #fff;
+		text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 	}
-	.stagemid span {
-		font-size: 0.74rem;
+	.stagenum {
+		font-size: 0.72rem;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
-		color: #8f88b4;
+		color: #b9b2d6;
+	}
+	.stagenum b {
+		font-size: 0.95rem;
+		color: var(--acc);
+	}
+	.stagenum i {
+		font-style: normal;
+		margin-left: 0.4rem;
+		opacity: 0.6;
 	}
 	.killdots {
 		display: flex;
 		gap: 3px;
-		margin-top: 0.2rem;
+		margin-top: 0.15rem;
 	}
 	.killdots b {
-		width: 12px;
+		width: 13px;
 		height: 4px;
-		border-radius: 99px;
-		background: rgba(255, 255, 255, 0.14);
+		border-radius: 2px;
+		background: rgba(255, 255, 255, 0.2);
 	}
 	.killdots b.done {
 		background: var(--acc);
+		box-shadow: 0 0 6px var(--acc);
 	}
 
-	/* the foe itself: a big hit area, a pulse ring behind it, nothing on top of
-	   the sprite that could swallow a click */
 	.foeBtn {
 		position: relative;
-		width: min(340px, 74vw);
+		width: min(330px, 70vw);
 		aspect-ratio: 1;
 		display: grid;
 		place-items: center;
@@ -511,264 +696,293 @@
 		-webkit-user-select: none;
 	}
 	.foeBtn:active .foeArt {
-		transform: scale(0.94);
+		transform: translateY(3px) scale(0.95);
 	}
 	.foeArt {
-		width: 78%;
-		height: 78%;
+		width: 72%;
+		height: 72%;
 		object-fit: contain;
 		image-rendering: pixelated;
-		filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.6));
+		filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.55));
 		transition: transform 0.08s ease;
 		pointer-events: none;
+		animation: pcbob 2.8s ease-in-out infinite;
 	}
-	.ring {
+	/* an ellipse on the floor instead of a glowing ring, so the foe stands in the
+	   scene rather than floating in front of it */
+	.shadow {
 		position: absolute;
-		inset: 12%;
+		bottom: 12%;
+		width: 42%;
+		height: 7%;
 		border-radius: 50%;
-		background: radial-gradient(circle, color-mix(in srgb, var(--acc) 30%, transparent), transparent 66%);
-		animation: pcpulse 2.6s ease-in-out infinite;
+		background: rgba(0, 0, 0, 0.4);
+		filter: blur(5px);
 		pointer-events: none;
 	}
-	.foeBtn.boss .ring {
-		background: radial-gradient(circle, rgba(255, 90, 90, 0.4), transparent 66%);
-		animation-duration: 1.1s;
-	}
-	.foeBtn.shiny .ring {
-		background: radial-gradient(circle, rgba(255, 224, 102, 0.45), transparent 66%);
+	.foeBtn.boss .foeArt {
+		filter: drop-shadow(0 0 18px rgba(255, 90, 90, 0.7)) drop-shadow(0 10px 16px rgba(0, 0, 0, 0.6));
+		animation-duration: 1.4s;
 	}
 	.foeBtn.shiny .foeArt {
-		filter: drop-shadow(0 0 18px rgba(255, 224, 102, 0.75)) drop-shadow(0 12px 22px rgba(0, 0, 0, 0.6));
+		filter: drop-shadow(0 0 20px rgba(255, 224, 102, 0.85)) drop-shadow(0 10px 16px rgba(0, 0, 0, 0.6));
 	}
 
 	.dmg {
 		position: absolute;
 		transform: translate(-50%, -50%);
-		font-weight: 800;
-		font-size: 1.1rem;
+		font-weight: 900;
+		font-size: 1.15rem;
 		color: #fff;
-		text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+		text-shadow: 0 0 6px rgba(0, 0, 0, 0.9), 0 2px 0 rgba(0, 0, 0, 0.6);
 		pointer-events: none;
 		animation: pcfloat 0.7s ease-out forwards;
 	}
 	.dmg.crit {
-		font-size: 1.65rem;
+		font-size: 1.8rem;
 		color: #ffd166;
 	}
 
-	.foename {
+	.nameplate {
 		display: flex;
 		align-items: center;
-		gap: 0.45rem;
-		font-size: 1.05rem;
+		gap: 0.4rem;
+		padding: 0.3rem 0.8rem;
+		border-radius: 999px;
+		background: rgba(6, 4, 14, 0.72);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+	}
+	.nameplate.bossplate {
+		border-color: rgba(255, 90, 90, 0.6);
+	}
+	.npname {
+		font-size: 0.95rem;
+		font-weight: 700;
 	}
 	.typetag {
-		padding: 0.1rem 0.5rem;
+		padding: 0.08rem 0.5rem;
 		border-radius: 999px;
-		font-size: 0.66rem;
-		letter-spacing: 0.1em;
+		font-size: 0.6rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		background: color-mix(in srgb, var(--t) 25%, transparent);
+		background: color-mix(in srgb, var(--t) 30%, transparent);
 		color: var(--t);
 	}
 	.bosstag {
-		font-style: normal;
-		padding: 0.1rem 0.5rem;
+		padding: 0.08rem 0.5rem;
 		border-radius: 999px;
-		font-size: 0.66rem;
-		letter-spacing: 0.12em;
-		background: rgba(255, 90, 90, 0.2);
-		color: #ff9a8a;
+		font-size: 0.6rem;
+		font-weight: 800;
+		letter-spacing: 0.14em;
+		background: #d8443f;
+		color: #fff;
 	}
 	.shinytag {
 		font-style: normal;
-		padding: 0.1rem 0.5rem;
-		border-radius: 999px;
-		font-size: 0.66rem;
-		letter-spacing: 0.12em;
-		background: rgba(255, 224, 102, 0.18);
 		color: #ffe066;
 	}
 
 	.hpwrap {
-		width: min(420px, 88%);
 		display: grid;
-		gap: 0.25rem;
-		justify-items: center;
+		gap: 0.3rem;
+		width: min(430px, 92%);
 	}
 	.hpbar {
-		width: 100%;
-		height: 14px;
-		border-radius: 999px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		background: rgba(0, 0, 0, 0.4);
+		position: relative;
+		height: 20px;
+		border-radius: 6px;
+		border: 2px solid rgba(0, 0, 0, 0.55);
+		background: rgba(0, 0, 0, 0.5);
 		overflow: hidden;
+		box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
 	}
 	.hpbar i {
 		display: block;
 		height: 100%;
-		background: linear-gradient(90deg, #ff5a5a, #ffb454);
+		background: linear-gradient(180deg, #7ee08a, #34a04a 55%, #2a8440);
 		transition: width 0.1s linear;
 	}
-	.hptext {
-		font-size: 0.76rem;
-		color: #8f88b4;
-		font-variant-numeric: tabular-nums;
+	.hpbar.bosshp i {
+		background: linear-gradient(180deg, #ff8a7a, #d8443f 55%, #a92e2b);
 	}
-
+	.hptext {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		font-size: 0.7rem;
+		font-weight: 700;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+	}
 	.bosstimer {
 		position: relative;
-		width: min(420px, 88%);
-		height: 18px;
-		border-radius: 999px;
-		background: rgba(0, 0, 0, 0.45);
+		height: 15px;
+		border-radius: 6px;
+		border: 2px solid rgba(0, 0, 0, 0.5);
+		background: rgba(0, 0, 0, 0.5);
 		overflow: hidden;
 	}
 	.bosstimer i {
 		display: block;
 		height: 100%;
-		background: linear-gradient(90deg, #6f5ad8, #9b8cff);
+		background: linear-gradient(180deg, #9b8cff, #6f5ad8);
 		transition: width 0.1s linear;
 	}
 	.bosstimer.low i {
-		background: linear-gradient(90deg, #d84a4a, #ff8a5a);
+		background: linear-gradient(180deg, #ff8a5a, #d84a4a);
 	}
 	.bosstimer span {
 		position: absolute;
 		inset: 0;
 		display: grid;
 		place-items: center;
-		font-size: 0.7rem;
-		font-variant-numeric: tabular-nums;
-		text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+		font-size: 0.63rem;
+		font-weight: 700;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
 	}
 
 	.hint {
 		margin: 0;
-		font-size: 0.76rem;
-		color: #7d769f;
-		text-align: center;
+		font-size: 0.72rem;
+		color: #cdc6e4;
+		text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 	}
 
+	/* ---- side panel ---- */
 	.panel {
 		display: grid;
-		gap: 0.4rem;
+		gap: 0.35rem;
 		align-content: start;
-		max-height: calc(100dvh - 5.5rem);
+		max-height: calc(100dvh - 5rem);
 		overflow-y: auto;
-		padding-right: 0.2rem;
+		padding: 0.5rem;
+		border-radius: 16px;
+		border: 2px solid rgba(255, 255, 255, 0.09);
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
 	}
 	.tabbar {
 		display: flex;
 		gap: 3px;
-		padding: 3px;
-		border-radius: 999px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		background: rgba(255, 255, 255, 0.04);
 		position: sticky;
-		top: 0;
+		top: -0.5rem;
 		z-index: 2;
-		backdrop-filter: none;
+		padding: 3px;
+		margin: -0.5rem -0.5rem 0.2rem;
+		border-radius: 12px;
+		background: #120f24;
 	}
 	.tabbar button {
 		flex: 1;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		gap: 0.3rem;
-		padding: 0.4rem 0.3rem;
+		gap: 0.2rem;
+		padding: 0.45rem 0.2rem;
 		border: 0;
-		border-radius: 999px;
-		background: transparent;
+		border-radius: 9px;
+		background: rgba(255, 255, 255, 0.04);
 		color: #9a93bd;
-		font-size: 0.8rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
 		cursor: pointer;
 	}
 	.tabbar button.on {
-		background: color-mix(in srgb, var(--acc) 28%, transparent);
-		color: #fff;
+		background: linear-gradient(180deg, color-mix(in srgb, var(--acc) 55%, #fff 8%), var(--acc));
+		color: #0d0a18;
 	}
-	.tabbar i,
 	.pip {
 		font-style: normal;
-		font-size: 0.68rem;
-		padding: 0.02rem 0.35rem;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.1);
-	}
-	.pip {
-		background: rgba(255, 158, 203, 0.28);
-		color: #ffd0e6;
+		width: 14px;
+		height: 14px;
+		display: grid;
+		place-items: center;
+		border-radius: 50%;
+		background: #ff5a8a;
+		color: #fff;
+		font-size: 0.6rem;
 	}
 
 	.amounts {
 		display: flex;
 		align-items: center;
-		gap: 0.3rem;
-		font-size: 0.74rem;
+		gap: 0.25rem;
+		font-size: 0.68rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
 		color: #8f88b4;
 	}
 	.amounts button {
-		padding: 0.2rem 0.55rem;
-		border-radius: 8px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		padding: 0.22rem 0.5rem;
+		border-radius: 7px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
 		background: rgba(255, 255, 255, 0.04);
 		color: #cfc9ea;
-		font-size: 0.74rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0;
 		cursor: pointer;
 	}
 	.amounts button.on {
 		border-color: var(--acc);
+		background: color-mix(in srgb, var(--acc) 30%, transparent);
 		color: #fff;
 	}
 
 	.rowbtn {
 		display: grid;
-		grid-template-columns: 44px minmax(0, 1fr) auto;
+		grid-template-columns: 42px minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 0.6rem;
-		padding: 0.45rem 0.7rem 0.45rem 0.45rem;
-		border-radius: 13px;
+		gap: 0.55rem;
+		padding: 0.4rem 0.65rem 0.4rem 0.4rem;
+		border-radius: 11px;
 		border: 1px solid rgba(255, 255, 255, 0.09);
-		background: rgba(255, 255, 255, 0.03);
+		border-left: 3px solid color-mix(in srgb, var(--t, #6f5ad8) 55%, transparent);
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
 		color: inherit;
 		text-align: left;
 		cursor: pointer;
-		transition:
-			border-color 0.15s,
-			background 0.15s;
+		transition: transform 0.08s, border-color 0.15s, background 0.15s;
 	}
 	.rowbtn:hover:not(:disabled) {
 		border-color: var(--t, var(--acc));
-		background: rgba(255, 255, 255, 0.06);
+		background: rgba(255, 255, 255, 0.08);
+	}
+	.rowbtn:active:not(:disabled) {
+		transform: translateY(1px);
 	}
 	.rowbtn:disabled {
-		opacity: 0.42;
+		opacity: 0.38;
 		cursor: default;
 	}
 	.rowbtn.owned {
-		border-color: color-mix(in srgb, var(--t) 40%, transparent);
+		background: linear-gradient(
+			90deg,
+			color-mix(in srgb, var(--t) 14%, transparent),
+			rgba(255, 255, 255, 0.02) 45%
+		);
 	}
 	.ricon {
 		display: grid;
 		place-items: center;
-		width: 44px;
-		height: 44px;
+		width: 42px;
+		height: 42px;
 	}
 	.ricon img {
 		width: 100%;
 		image-rendering: pixelated;
 	}
-	.ricon.big {
-		font-size: 1.4rem;
+	.ricon.glyph {
+		font-size: 1.35rem;
 	}
 	.rmid {
 		display: grid;
-		gap: 0.1rem;
+		gap: 0.08rem;
 		min-width: 0;
 	}
 	.rmid b {
-		font-size: 0.86rem;
+		font-size: 0.84rem;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -776,137 +990,194 @@
 	.rmid u {
 		text-decoration: none;
 		color: var(--t, var(--acc));
-		font-size: 0.76rem;
+		font-size: 0.74rem;
+	}
+	.plus {
+		font-style: normal;
+		margin-left: 0.3rem;
+		padding: 0.02rem 0.32rem;
+		border-radius: 5px;
+		background: #3fae6a;
+		color: #04180c;
+		font-size: 0.66rem;
+		font-weight: 800;
 	}
 	.rmid i {
 		font-style: normal;
-		font-size: 0.72rem;
-		color: #8f88b4;
+		font-size: 0.7rem;
+		color: #948dba;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 	.rcost {
-		font-size: 0.78rem;
-		color: #ffd08a;
-		font-variant-numeric: tabular-nums;
+		font-size: 0.76rem;
+		font-weight: 700;
+		color: #ffd066;
 		white-space: nowrap;
 	}
 	.candycost {
 		color: #ff9ecb;
 	}
 	.tapup {
-		border-color: rgba(255, 208, 138, 0.3);
+		border-left-color: #ff9f6b;
+	}
+	.perk {
+		border-left-color: #ff9ecb;
 	}
 
 	.rebirth {
 		display: grid;
-		gap: 0.5rem;
-		padding: 0.8rem;
-		border-radius: 14px;
-		border: 1px solid rgba(255, 158, 203, 0.3);
-		background: rgba(255, 158, 203, 0.07);
+		gap: 0.4rem;
+		padding: 0.7rem;
+		border-radius: 13px;
+		border: 1px solid rgba(255, 158, 203, 0.35);
+		background: linear-gradient(180deg, rgba(255, 158, 203, 0.13), rgba(255, 158, 203, 0.04));
+	}
+	.rbtitle {
+		font-size: 0.66rem;
+		font-weight: 800;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: #ff9ecb;
 	}
 	.rbline {
 		margin: 0;
-		font-size: 0.86rem;
+		font-size: 0.84rem;
 	}
 	.rbline b {
-		color: #ff9ecb;
+		color: #ffc8e2;
 	}
 	.rbsmall {
 		margin: 0;
-		font-size: 0.74rem;
-		color: #8f88b4;
+		font-size: 0.72rem;
+		color: #948dba;
+	}
+	.rbsmall b {
+		color: #d6d0ee;
 	}
 	.confirm {
 		display: flex;
-		gap: 0.4rem;
+		gap: 0.35rem;
 	}
 
-	.dexline {
-		margin: 0.2rem 0;
-		font-size: 0.76rem;
+	.dexhead {
+		display: flex;
+		gap: 0.4rem;
+		font-size: 0.68rem;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
 		color: #8f88b4;
+	}
+	.dexhead b {
+		font-size: 0.85rem;
+		letter-spacing: 0;
+		color: #e8e3f7;
 	}
 	.dexgrid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
-		gap: 4px;
+		grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+		gap: 3px;
 	}
 	.dexcell {
 		position: relative;
 		aspect-ratio: 1;
 		display: grid;
 		place-items: center;
-		border-radius: 10px;
-		border: 1px solid rgba(255, 255, 255, 0.06);
-		background: rgba(255, 255, 255, 0.02);
+		border-radius: 8px;
+		border: 1px solid rgba(255, 255, 255, 0.05);
+		background: rgba(0, 0, 0, 0.25);
 	}
 	.dexcell img {
-		width: 90%;
+		width: 92%;
 		image-rendering: pixelated;
-		filter: brightness(0) opacity(0.32);
-		transition: filter 0.2s;
+		filter: brightness(0) opacity(0.3);
+	}
+	.dexcell.got {
+		background: rgba(255, 255, 255, 0.05);
+		border-color: rgba(255, 255, 255, 0.12);
 	}
 	.dexcell.got img {
 		filter: none;
 	}
 	.dexcell.bossmon {
-		border-color: rgba(255, 90, 90, 0.28);
+		border-color: rgba(255, 90, 90, 0.3);
 	}
 	.dexn {
 		position: absolute;
 		right: 2px;
-		bottom: 1px;
-		font-size: 0.6rem;
-		color: #cfc9ea;
+		bottom: 0;
+		font-size: 0.58rem;
+		font-weight: 700;
 		text-shadow: 0 1px 3px #000;
 	}
 	.dexs {
 		position: absolute;
-		left: 3px;
-		top: 1px;
-		font-size: 0.62rem;
+		left: 2px;
+		top: 0;
+		font-size: 0.6rem;
 		color: #ffe066;
 	}
 
+	.boardnote {
+		margin: 0.2rem 0;
+		font-size: 0.72rem;
+		color: #8f88b4;
+	}
 	.boardlist {
 		display: grid;
-		gap: 0.35rem;
+		gap: 0.3rem;
 	}
 	.brow {
 		display: grid;
-		grid-template-columns: 1.6rem minmax(0, 1fr) auto;
+		grid-template-columns: 1.5rem minmax(0, 1fr) auto;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.45rem 0.7rem;
-		border-radius: 12px;
+		padding: 0.4rem 0.6rem;
+		border-radius: 11px;
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		background: rgba(255, 255, 255, 0.03);
 	}
+	.brow.first {
+		border-color: rgba(255, 208, 102, 0.45);
+		background: rgba(255, 208, 102, 0.09);
+	}
 	.brow.me {
 		border-color: var(--acc);
-		background: color-mix(in srgb, var(--acc) 12%, transparent);
 	}
 	.bpos {
-		font-weight: 700;
+		font-weight: 800;
 		color: #8f88b4;
 	}
 	.bname {
-		font-size: 0.88rem;
+		display: grid;
+		gap: 0.05rem;
+		min-width: 0;
+	}
+	.bname b {
+		font-size: 0.85rem;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-	.bstage {
-		font-size: 0.82rem;
-		color: #ffd08a;
-		white-space: nowrap;
+	.bname i {
+		font-style: normal;
+		font-size: 0.66rem;
+		color: #8f88b4;
 	}
-	.bmeta {
-		grid-column: 2 / -1;
-		font-size: 0.7rem;
+	.bstage {
+		display: grid;
+		justify-items: end;
+	}
+	.bstage b {
+		font-size: 1.05rem;
+		color: #ffd066;
+	}
+	.bstage i {
+		font-style: normal;
+		font-size: 0.58rem;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
 		color: #8f88b4;
 	}
 
@@ -917,57 +1188,68 @@
 		display: grid;
 		place-items: center;
 		padding: 1rem;
-		background: rgba(4, 2, 10, 0.82);
+		background: rgba(4, 2, 10, 0.85);
 	}
 	.sheet {
 		display: grid;
-		gap: 0.6rem;
+		gap: 0.55rem;
 		justify-items: center;
 		text-align: center;
 		width: min(420px, 92vw);
 		padding: 1.4rem;
-		border-radius: 18px;
-		border: 1px solid color-mix(in srgb, var(--acc) 40%, transparent);
-		background: #100c22;
+		border-radius: 16px;
+		border: 2px solid color-mix(in srgb, var(--acc) 45%, transparent);
+		background: #120f24;
 	}
 	.sheet h2 {
 		margin: 0;
-		font-size: 1.15rem;
+		font-size: 1.1rem;
 	}
 	.sheet p {
 		margin: 0;
-		font-size: 0.88rem;
+		font-size: 0.86rem;
 	}
 	.sheet b {
-		color: #ffd08a;
+		color: #ffd066;
 	}
 
 	.err {
-		max-width: 1280px;
-		margin: 0.8rem auto 0;
-		font-size: 0.76rem;
-		color: #ff9a8a;
+		max-width: 1320px;
+		margin: 0.7rem auto 0;
+		font-size: 0.74rem;
+		color: #ff8a7a;
 	}
 
-	@keyframes pcpulse {
+	@keyframes pcbob {
 		0%,
 		100% {
-			opacity: 0.5;
-			transform: scale(1);
+			transform: translateY(0);
 		}
 		50% {
-			opacity: 0.85;
-			transform: scale(1.06);
+			transform: translateY(-7px);
+		}
+	}
+	@keyframes pcdrift {
+		0% {
+			transform: translate3d(0, 0, 0);
+			opacity: 0.3;
+		}
+		50% {
+			opacity: 0.8;
+		}
+		100% {
+			transform: translate3d(-14px, 22px, 0);
+			opacity: 0.3;
 		}
 	}
 	@keyframes pcfloat {
 		0% {
 			opacity: 1;
-			transform: translate(-50%, -50%) scale(0.8);
+			transform: translate(-50%, -50%) scale(0.85);
 		}
 		100% {
 			opacity: 0;
-			transform: translate(-50%, -190%) scale(1.15);
+			transform: translate(-50%, -190%) scale(1.2);
 		}
 	}
 </style>

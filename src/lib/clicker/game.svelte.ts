@@ -211,14 +211,14 @@ class Game {
 		return (flat + share) * this.powerBonus * Math.pow(1.25, this.save.perks.tap ?? 0);
 	}
 
+	// Closed form for the geometric run rather than a loop, because the party list
+	// re-prices itself ten times a second and x100 would mean 1400 multiplies a tick.
 	memberCost(key: string, count = 1): number {
 		const m = PARTY.find((p) => p.key === key);
-		if (!m) return Infinity;
-		const lvl = this.memberLevel(key);
-		// sum of a geometric run, so buying ten at once costs what ten cost
-		let total = 0;
-		for (let i = 0; i < count; i++) total += m.cost * Math.pow(1.07, lvl + i);
-		return total;
+		if (!m || count < 1) return Infinity;
+		const k = 1.07;
+		const first = m.cost * Math.pow(k, this.memberLevel(key));
+		return (first * (Math.pow(k, count) - 1)) / (k - 1);
 	}
 
 	get tapCost(): number {
@@ -395,20 +395,18 @@ class Game {
 		this.writeLocal();
 	}
 
-	// how many levels the money on hand covers, so the x10 / max buttons are honest
+	// How many levels the money on hand actually covers. x10 used to grey the whole
+	// row out when ten was one too many, which read as a dead button; now the row
+	// buys what it can and says so.
 	affordable(key: string, cap = 1000): number {
 		const m = PARTY.find((p) => p.key === key);
 		if (!m) return 0;
-		let lvl = this.memberLevel(key);
-		let left = this.save.gold;
-		let n = 0;
-		while (n < cap) {
-			const c = m.cost * Math.pow(1.07, lvl + n);
-			if (c > left) break;
-			left -= c;
-			n++;
-		}
-		return n;
+		const k = 1.07;
+		const first = m.cost * Math.pow(k, this.memberLevel(key));
+		if (!isFinite(first) || first <= 0) return 0;
+		const n = Math.log((this.save.gold * (k - 1)) / first + 1) / Math.log(k);
+		if (!isFinite(n) || n < 1) return 0;
+		return Math.min(cap, Math.floor(n));
 	}
 
 	buyTap() {

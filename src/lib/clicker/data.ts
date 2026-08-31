@@ -249,6 +249,40 @@ export function zoneOf(stage: number): Zone {
 	return ZONES[i];
 }
 
+// The backdrop each zone is fought against. Drawn entirely from these colours by
+// the page, so a new zone is a palette and not an image to download.
+export interface Scene {
+	sky1: string;
+	sky2: string;
+	far: string;
+	near: string;
+	ground: string;
+	orb: string; // sun, moon or whatever is glowing back there
+	glow: string;
+	fleck: string; // drifting motes: snow, embers, sparks
+}
+
+export const SCENES: Record<string, Scene> = {
+	normal: { sky1: '#79c6f2', sky2: '#cfeaff', far: '#5c9c6a', near: '#3f7a4d', ground: '#2f5e3b', orb: '#fff4c2', glow: 'rgba(255,240,190,0.5)', fleck: 'rgba(255,255,255,0.5)' },
+	bug: { sky1: '#2f6a48', sky2: '#7fbf7a', far: '#245239', near: '#173b28', ground: '#122c1e', orb: '#d6ffb0', glow: 'rgba(180,255,150,0.35)', fleck: 'rgba(210,255,170,0.6)' },
+	rock: { sky1: '#3b2f2b', sky2: '#6b5347', far: '#4a3a31', near: '#33261f', ground: '#211815', orb: '#ffd9a0', glow: 'rgba(255,200,140,0.3)', fleck: 'rgba(255,220,180,0.35)' },
+	water: { sky1: '#2f7fc4', sky2: '#a8e2f5', far: '#2b6fa8', near: '#1d4f7d', ground: '#143a5c', orb: '#fff6d0', glow: 'rgba(180,235,255,0.45)', fleck: 'rgba(210,245,255,0.7)' },
+	electric: { sky1: '#1b2140', sky2: '#3d4a7a', far: '#2a2f52', near: '#1a1d38', ground: '#101226', orb: '#ffe45c', glow: 'rgba(255,228,92,0.45)', fleck: 'rgba(255,238,130,0.85)' },
+	ghost: { sky1: '#1a1230', sky2: '#4a2f66', far: '#2a1c47', near: '#1a1130', ground: '#100a1e', orb: '#dcd0ff', glow: 'rgba(190,150,255,0.4)', fleck: 'rgba(210,180,255,0.6)' },
+	fire: { sky1: '#2a1010', sky2: '#a03418', far: '#5c1d12', near: '#3a120c', ground: '#240a07', orb: '#ffb057', glow: 'rgba(255,120,50,0.5)', fleck: 'rgba(255,170,80,0.9)' },
+	ice: { sky1: '#7fb6de', sky2: '#e6f6ff', far: '#a8cfe6', near: '#7fa8c4', ground: '#5d84a0', orb: '#ffffff', glow: 'rgba(220,245,255,0.6)', fleck: 'rgba(255,255,255,0.95)' },
+	dragon: { sky1: '#2b2a6b', sky2: '#8f7fd8', far: '#3b3480', near: '#282158', ground: '#1a1540', orb: '#ffe9a8', glow: 'rgba(180,160,255,0.4)', fleck: 'rgba(220,210,255,0.7)' },
+	dark: { sky1: '#0e0d16', sky2: '#2a2436', far: '#1a1724', near: '#110f18', ground: '#0a0810', orb: '#ff6b6b', glow: 'rgba(255,80,80,0.3)', fleck: 'rgba(255,120,120,0.5)' },
+	grass: { sky1: '#66c2e8', sky2: '#dff3c4', far: '#7cc45c', near: '#57993f', ground: '#3d7030', orb: '#fff3b0', glow: 'rgba(255,245,180,0.5)', fleck: 'rgba(255,230,140,0.8)' },
+	fighting: { sky1: '#6b4a2f', sky2: '#e0b483', far: '#8a6440', near: '#5e4229', ground: '#402c1b', orb: '#ffd9a0', glow: 'rgba(255,200,130,0.4)', fleck: 'rgba(255,220,170,0.4)' },
+	steel: { sky1: '#232833', sky2: '#4e5a6e', far: '#333b4a', near: '#222833', ground: '#161a22', orb: '#ffab5c', glow: 'rgba(255,150,70,0.35)', fleck: 'rgba(255,190,110,0.8)' },
+	psychic: { sky1: '#3a1250', sky2: '#c05a9e', far: '#5b2170', near: '#3a1349', ground: '#250c30', orb: '#ffd2f0', glow: 'rgba(255,140,220,0.4)', fleck: 'rgba(255,190,240,0.7)' }
+};
+
+export function sceneOf(type: string): Scene {
+	return SCENES[type] ?? SCENES.normal;
+}
+
 // The party. Cost and dps both climb about an order of magnitude a slot, which
 // is what makes a new recruit feel like a jump rather than a rounding error.
 export interface Member {
