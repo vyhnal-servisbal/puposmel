@@ -339,27 +339,36 @@ export const DECOR = [
 
 export type Hour = 'day' | 'sunset' | 'night' | 'dawn';
 
-export const HOURS: Record<Hour, { wash: string; orbSize: number; orbTop: number; dim: number; stars: boolean }> = {
+// The wash and the vignette both darken, so they have to be read together. The
+// first pass had night on 0.62 wash plus a 0.77 vignette and a dark zone like the
+// volcano came out as one flat black rectangle.
+export const HOURS: Record<
+	Hour,
+	{ wash: string; orbSize: number; orbTop: number; dim: number; stars: boolean; orb?: string; glow?: string }
+> = {
 	day: { wash: 'transparent', orbSize: 74, orbTop: 12, dim: 0, stars: false },
 	sunset: {
-		wash: 'linear-gradient(180deg, rgba(255,138,52,0.34), rgba(255,86,120,0.2) 45%, rgba(60,20,50,0.25))',
+		wash: 'linear-gradient(180deg, rgba(255,138,52,0.26), rgba(255,86,120,0.15) 45%, rgba(60,20,50,0.16))',
 		orbSize: 104,
 		orbTop: 46,
-		dim: 0.12,
+		dim: 0.06,
 		stars: false
 	},
 	night: {
-		wash: 'linear-gradient(180deg, rgba(8,12,44,0.62), rgba(4,6,26,0.48))',
-		orbSize: 52,
+		wash: 'linear-gradient(180deg, rgba(14,22,62,0.4), rgba(8,14,42,0.28))',
+		orbSize: 54,
 		orbTop: 10,
-		dim: 0.45,
-		stars: true
+		dim: 0.16,
+		stars: true,
+		// a moon, not whatever the zone had hanging up there in daylight
+		orb: '#e9eeff',
+		glow: 'rgba(190,205,255,0.35)'
 	},
 	dawn: {
-		wash: 'linear-gradient(180deg, rgba(255,178,206,0.3), rgba(255,224,150,0.16) 50%, transparent)',
+		wash: 'linear-gradient(180deg, rgba(255,178,206,0.24), rgba(255,224,150,0.12) 50%, transparent)',
 		orbSize: 84,
 		orbTop: 30,
-		dim: 0.06,
+		dim: 0.03,
 		stars: false
 	}
 };

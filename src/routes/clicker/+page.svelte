@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { fade, fly, scale } from 'svelte/transition';
+	import { fade, fly } from 'svelte/transition';
 	import { game, fmt, pretty, hpAt, isBossStage, PARTY, PERKS, ZONES } from '$lib/clicker/game.svelte';
 	import { sceneOf, variantOf, HOURS, type Upgrade } from '$lib/clicker/data';
 	import { spriteOf, aniOf, typeColor } from '$lib/dexStore.svelte';
@@ -38,7 +38,8 @@
 
 	let sceneVars = $derived(
 		`--sky1:${scene.sky1};--sky2:${scene.sky2};--far:${scene.far};--near:${scene.near};` +
-			`--ground:${scene.ground};--orb:${scene.orb};--glow:${scene.glow};--fleck:${scene.fleck};` +
+			`--ground:${scene.ground};--orb:${hour.orb ?? scene.orb};--glow:${hour.glow ?? scene.glow};` +
+			`--fleck:${scene.fleck};` +
 			`--shFar:${v.far};--shMid:${v.mid};--shNear:${v.near};--wash:${hour.wash};` +
 			`--orbSize:${hour.orbSize}px;--orbTop:${hour.orbTop}%;--orbX:${v.orbX}%;--dim:${hour.dim}`
 	);
@@ -112,6 +113,9 @@
 	function upType(u: Upgrade): string {
 		return PARTY.find((p) => p.key === u.member)?.type ?? 'normal';
 	}
+
+	// the shelf is sorted cheapest first, so a cap hides only what you cannot buy
+	const SHOP_MAX = 50;
 
 	const FILTERS: [ShopFilter, string][] = [
 		['all', 'All'],
@@ -201,16 +205,13 @@
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div class="foeBtn" class:boss={foe.boss} class:shiny={foe.shiny} onclick={hitFoe} role="button" tabindex="0">
 						<span class="shadow"></span>
-						{#key foe.mon[1] + String(foe.shiny)}
-							<img
-								class="foeArt"
-								src={art(foe.mon[1], foe.mon[0], foe.shiny)}
-								alt={pretty(foe.mon[1])}
-								draggable="false"
-								onerror={() => (broken[foe.mon[1]] = true)}
-								in:scale={{ duration: 220, start: 0.75 }}
-							/>
-						{/key}
+						<img
+							class="foeArt"
+							src={art(foe.mon[1], foe.mon[0], foe.shiny)}
+							alt=""
+							draggable="false"
+							onerror={() => (broken[foe.mon[1]] = true)}
+						/>
 						{#each game.hits as h (h.id)}
 							<span class="dmg" class:crit={h.crit} style="left:{h.x}%; top:{h.y}%">
 								{fmt(h.amount)}{h.crit ? '!' : ''}
@@ -270,6 +271,7 @@
 					{/each}
 				</div>
 
+				<div class="list">
 				<button class="row tapup" onclick={() => game.buyTap()} disabled={game.save.gold < game.tapCost}>
 					<span class="ricon glyph">👆</span>
 					<span class="rmid">
@@ -312,6 +314,7 @@
 						</button>
 					{/if}
 				{/each}
+				</div>
 			{:else if tab === 'shop'}
 				<div class="chips">
 					{#each FILTERS as [k, name] (k)}
@@ -323,7 +326,8 @@
 				</div>
 				<p class="note">{game.shopOwned} bought · {shopAll.length} left · a rebirth clears them</p>
 
-				{#each shopShown.slice(0, 40) as u (u.key)}
+				<div class="list">
+				{#each shopShown.slice(0, SHOP_MAX) as u (u.key)}
 					{@const ready = game.save.gold >= u.cost}
 					<button
 						class="row shopitem"
@@ -348,7 +352,10 @@
 				{/each}
 				{#if !shopShown.length}
 					<p class="note">Nothing here. Level the party up to stock the shelves.</p>
+				{:else if shopShown.length > SHOP_MAX}
+					<p class="note">{shopShown.length - SHOP_MAX} pricier ones not listed yet.</p>
 				{/if}
+				</div>
 			{:else if tab === 'perks'}
 				<div class="rebirth">
 					<span class="rbtitle">Professor's Reset</span>
@@ -356,9 +363,15 @@
 						Wipe the run, keep candy, perks and the Dex. Worth <b>🍬 {fmt(game.candyGain)}</b> right now.
 					</p>
 					<p class="note">
-						Candy in hand is itself <b>+{Math.round((game.candyBonus - 1) * 100)}%</b> damage, so spending
-						every last one is not always right. Rebirths: {game.save.rebirths}.
-						{#if game.startGold > 0}Restarts with ₽ {fmt(game.startGold)}.{/if}
+						{#if game.save.candy > 0}
+							Candy in hand is itself <b>+{Math.round((game.candyBonus - 1) * 100)}%</b> damage, so
+							spending every last one is not always right.
+						{:else}
+							Candy buys the perks below, and every one you keep in hand is worth +2% damage on its
+							own.
+						{/if}
+						Rebirths: {game.save.rebirths}.{#if game.startGold > 0}
+							Restarts with ₽ {fmt(game.startGold)}.{/if}
 					</p>
 					{#if confirming}
 						<div class="confirm">
@@ -374,6 +387,7 @@
 					{/if}
 				</div>
 
+				<div class="list">
 				{#each PERKS as p (p.key)}
 					{@const lvl = game.save.perks[p.key] ?? 0}
 					{@const cost = game.perkCost(p.key)}
@@ -390,6 +404,7 @@
 						<span class="rcost candycost">{lvl >= p.max ? 'MAX' : `🍬 ${fmt(cost)}`}</span>
 					</button>
 				{/each}
+				</div>
 			{:else if tab === 'dex'}
 				<div class="dexhead">
 					<span><b>{game.dexCount}</b>/{dexAll.length} seen</span>
@@ -605,11 +620,11 @@
 	.screen {
 		position: relative;
 		display: grid;
-		grid-template-rows: auto auto minmax(0, 1fr) auto;
+		grid-template-rows: auto auto 1fr auto;
 		justify-items: center;
-		align-content: start;
+		align-items: center;
 		gap: 0.45rem;
-		min-height: 560px;
+		height: clamp(520px, 64vh, 640px);
 		padding: 0.7rem;
 		border-radius: 13px;
 		border: 3px solid var(--line);
@@ -665,18 +680,20 @@
 		left: -8%;
 		width: 116%;
 	}
+	/* Aerial perspective: the far ridge is mixed toward the sky so it reads as
+	   distance, the middle one is the zone colour, the near one is darker. Before
+	   this the far and middle bands were the same colour at two opacities and the
+	   whole thing looked like one flat shape. */
 	.band.far {
 		bottom: 25%;
 		height: 48%;
-		background: var(--far);
-		opacity: 0.6;
+		background: color-mix(in srgb, var(--far) 55%, var(--sky2));
 		clip-path: var(--shFar);
 	}
 	.band.mid {
 		bottom: 19%;
 		height: 42%;
 		background: var(--far);
-		opacity: 0.85;
 		clip-path: var(--shMid);
 	}
 	.band.near {
@@ -711,7 +728,7 @@
 	}
 	.vignette {
 		inset: 0;
-		background: radial-gradient(78% 62% at 50% 45%, transparent 42%, rgba(6, 10, 20, calc(0.32 + var(--dim))));
+		background: radial-gradient(80% 65% at 50% 45%, transparent 45%, rgba(6, 10, 20, calc(0.24 + var(--dim))));
 	}
 
 	.topbar {
@@ -803,7 +820,7 @@
 	.foeBtn {
 		position: relative;
 		width: min(320px, 68vw);
-		aspect-ratio: 1;
+		height: min(320px, 68vw);
 		display: grid;
 		place-items: center;
 		cursor: pointer;
@@ -814,8 +831,10 @@
 		transform: translateY(3px) scale(0.95);
 	}
 	.foeArt {
-		width: 70%;
-		height: 70%;
+		width: 74%;
+		height: 74%;
+		max-width: 74%;
+		max-height: 74%;
 		object-fit: contain;
 		image-rendering: pixelated;
 		filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.5));
@@ -979,9 +998,6 @@
 		display: grid;
 		gap: 0.35rem;
 		align-content: start;
-		max-height: calc(100dvh - 5rem);
-		overflow-y: auto;
-		scrollbar-gutter: stable;
 		padding: 0.5rem;
 		border-radius: 20px;
 		border: 3px solid var(--line);
@@ -1072,6 +1088,29 @@
 		background: var(--sun);
 		color: #4a3800;
 		font-size: 0.62rem;
+	}
+
+	/* Eight rows and then a scrollbar. The panel used to run off the bottom of the
+	   page once the shop had a hundred things in it. The sliver of a ninth row is
+	   deliberate: it is what tells you there is more below. */
+	.list {
+		display: grid;
+		gap: 0.35rem;
+		max-height: calc(8 * (44px + 0.7rem) + 7 * 0.35rem + 0.9rem);
+		overflow-y: auto;
+		scrollbar-gutter: stable;
+		padding-right: 2px;
+	}
+	.list::-webkit-scrollbar {
+		width: 8px;
+	}
+	.list::-webkit-scrollbar-track {
+		background: #e8eef4;
+		border-radius: 99px;
+	}
+	.list::-webkit-scrollbar-thumb {
+		background: var(--line);
+		border-radius: 99px;
 	}
 
 	.row {
@@ -1228,6 +1267,9 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
 		gap: 3px;
+		max-height: 26rem;
+		overflow-y: auto;
+		scrollbar-gutter: stable;
 	}
 	.dexcell {
 		position: relative;
@@ -1272,6 +1314,9 @@
 	.boardlist {
 		display: grid;
 		gap: 0.3rem;
+		max-height: 26rem;
+		overflow-y: auto;
+		scrollbar-gutter: stable;
 	}
 	.brow {
 		display: grid;

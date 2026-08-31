@@ -398,8 +398,10 @@ class Game {
 	// lock it, and the run stops advancing on its own.
 	toggleFarm() {
 		this.save.farm = !this.save.farm;
-		this.save.kills = 0;
-		this.spawn();
+		// Keep the kills already banked on this stage; flipping the lock is not
+		// meant to throw your progress on it away. Only a boss stage has to
+		// re-roll, because the foe standing there has to change kind.
+		if (isBossStage(this.save.stage)) this.spawn();
 		this.dirty = true;
 	}
 
